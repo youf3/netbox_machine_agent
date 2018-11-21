@@ -1,25 +1,36 @@
 #!/usr/bin/python3
 # requirement: dmidecode
 
-import requests, logging, configparser, os, socket, re
+import configparser
+import logging
+import os
+import re
+import socket
+import urllib
+
+import requests
 
 import dmidecode
 
+
 class NetBoxAgent():    
     def __init__(self, configFile):        
-        self.load_conf(configFile)
-        self.create_header()
-        self.get_site()
-        if 'rack_group' in self.optional_conf: self.get_rack_group()
-        self.get_rack()        
-        self.get_device()
+        config, optional_conf = self.load_conf(configFile)
+        self.create_header(config['DEFAULT']['Token'])
+        self.get_site(config['DEFAULT']['sitename'])
+
+        if 'rack_group' in optional_conf: 
+            self.get_rack_group(optional_conf['rack_group'])
+        self.get_rack(config['DEFAULT']['rack_name'])        
+        self.get_device(self.config['DEFAULT']['device_role'], 
+        config['DEFAULT']['device_role_color'])
         
     
-    def create_header(self):        
+    def create_header(self, token):        
         self.headers = {
             'Content-Type': 'application/json',
             'Accept': 'application/json',
-            'Authorization': self.token
+            'Authorization': 'Token ' + token
         }
 
     def create_conf(self, configFile):
@@ -29,11 +40,13 @@ class NetBoxAgent():
         config['DEFAULT']['api_base_url'] = '{0}/api'.format(addr)
         config['DEFAULT']['Token'] = input('Authentication Token: ')
         config['DEFAULT']['sitename'] = input('Site name: ')
-        config['DEFAULT']['rack_group'] = input('Rack Group: ')
+        config['Optional']['rack_group'] = input('Rack Group: ')
         config['DEFAULT']['rack_name'] = input('Rack Name: ')
         config['DEFAULT']['device_role'] = input('Device Role: ')
         config['DEFAULT']['device_role_color'] = input(
             'Device Role Color Hex (e.g. aa1409): ')
+        config['Optional']['position'] = input(
+            'Mounted rack position (lowest) : ')
 
         with open(configFile, 'w') as config_file:
             config.write(config_file)
@@ -45,52 +58,51 @@ class NetBoxAgent():
         self.config = configparser.ConfigParser()
         self.config.read(configFile)
         self.base_url = self.config['DEFAULT']['api_base_url']
-        # self.sitename = config['DEFAULT']['sitename']
-        self.token = 'Token {0}'.format(self.config['DEFAULT']['Token'])        
-        # self.rack_name = config['DEFAULT']['rack_name']
-        # self.device_role_name = config['DEFAULT']['device_role']
-        # self.device_role_color = config['DEFAULT']['device_role_color']
+        self.token = 'Token {0}'.format(self.config['DEFAULT']['Token'])
+        
+        optional_conf = self.config['Optional']
 
-        #Load optional configurations
-        self.optional_conf_name= ['rack_group']
-        self.optional_conf = {}
+        return self.config, optional_conf
 
-        for item in self.optional_conf_name:
-            try:
-                self.optional_conf[item] = self.config['DEFAULT'][item]
-            except KeyError:
-                logging.debug('{0} not found in configuration'.format(item))   
+    def query_get(self, obj_name, params):
+        param_str = urllib.parse.urlencode(params)
+        resp = requests.get('{0}/{1}/?{2}'.format(
+            self.base_url, obj_name, param_str),headers=self.headers).json()
 
-    def get_site(self):
-        sitename = self.config['DEFAULT']['sitename']
-        resp = requests.get('{0}/dcim/sites/?name={1}'.format(
-            self.base_url, sitename),headers=self.headers).json()
-        if len(resp['results']) == 0:
-            self.create_site(sitename)
-        else: self.site = resp['results'][0]
+        if len(resp['results']) == 0 : return None
+        else : return resp['results'][0]
+
+    def query_post(self, obj_name, data):
+        
+        resp = requests.post('{0}/{1}/'.format(self.base_url, obj_name), 
+        json=data, headers=self.headers, allow_redirects=False)
+
+        if resp.status_code != 201: raise Exception(
+            'Failed to create {0} : {1} status {2}: {3}'
+            .format(obj_name, next(iter( data.items())), resp.status_code, 
+            resp.reason))
+        else : 
+            return resp.json()
+            
+
+    def get_site(self, sitename):        
+        params = {'name' : sitename}
+
+        self.site = self.query_get('dcim/sites',params)
+        if self.site == None : self.create_site(sitename)
 
     def create_site(self, sitename):
         logging.debug('creating site ' + sitename)
         data = {'name' : sitename, 'slug' : sitename}
-        resp = requests.post(self.base_url + '/dcim/sites/', json=data,
-                            headers=self.headers, allow_redirects=False)
-        if resp.status_code != 201: raise Exception(
-            'Failed to create site {0}: status {1}: {2}'
-            .format(sitename, resp.status_code, resp.reason))
-        else : 
-            self.site = resp.json()
-            logging.debug('Site created {0}({1})'.format(self.site['name'], 
-            self.site['id']))     
 
-    def get_rack_group(self):
-        rack_group_name = self.optional_conf['rack_group']
-        resp = requests.get('{0}/dcim/rack-groups/?site_id={1}&name={2}'.format(
-            self.base_url, self.site['id'], self.optional_conf['rack_group']),
-            headers=self.headers).json()
+        self.site = self.query_post('dcim/sites', data)
+        print('test')
+        
+    def get_rack_group(self, rack_group_name):
+        params = {'site_id' : self.site['id'], 'name' : rack_group_name}
 
-        if len(resp['results']) == 0:
-            self.create_rack_group(rack_group_name)
-        else: self.rack_group = resp['results'][0]
+        self.rack_group = self.query_get('dcim/rack-groups',params)
+        if self.rack_group == None: self.create_rack_group(rack_group_name)
 
     def create_rack_group(self, rack_group_name):        
         logging.debug('Creating rack group ' + rack_group_name)
@@ -98,27 +110,17 @@ class NetBoxAgent():
             'name' : rack_group_name, 'slug' : rack_group_name, 
             'site' : self.site['id']
             }
-        resp = requests.post(self.base_url + '/dcim/rack-groups/', json=data,
-                            headers=self.headers, allow_redirects=False)
-        if resp.status_code != 201: raise Exception(
-            'Failed to create rackgroup {0}: status {1}: {2}'
-            .format(rack_group_name, resp.status_code, resp.reason))
-        else : 
-            self.rack_group = resp.json()
-            logging.debug('Rack group created {0}({1})'.format(
-                self.rack_group['name'], self.rack_group['id']))   
+        self.rack_group = self.query_post('dcim/rack-groups', data)        
+        logging.debug('Rack group created {0}({1})'.format(
+            self.rack_group['name'], self.rack_group['id']))   
 
-    def get_rack(self):
-        rack_name = self.config['DEFAULT']['rack_name']
-        url = '{0}/dcim/racks/?name={1}&site_id={2}'.format(self.base_url, 
-        rack_name, self.site['id'])
-        if 'rack_group' in self.optional_conf:
-            url += '&group_id={0}'.format(self.rack_group['id'])
-        resp = requests.get(url,headers=self.headers).json()
-
-        if len(resp['results']) == 0:
-            self.create_rack(rack_name)
-        else: self.rack = resp['results'][0]
+    def get_rack(self, rack_name):        
+        params = {'name' : rack_name, 'site_id' : self.site['id']}
+        if hasattr(self, 'rack_group'):
+            params['group_id'] = self.rack_group['id']
+        
+        self.rack = self.query_get('dcim/racks',params)
+        if self.rack == None: self.create_rack(rack_name)        
         
     # TODO: rack_role and tenent (type and width?)
     def create_rack(self, rack_name):
@@ -127,65 +129,42 @@ class NetBoxAgent():
             'name' : rack_name, 'slug' : rack_name, 'site' : self.site['id']
         }
 
-        if 'rack_group' in self.optional_conf:
+        if hasattr(self, 'rack_group'):
             data['group'] = self.rack_group['id']
+        
+        self.rack = self.query_post('dcim/racks', data)        
+        logging.debug('Rack created {0}({1})'.format(self.rack['name'], 
+        self.rack['id']))   
 
-        resp = requests.post(self.base_url + '/dcim/racks/', json=data,
-                            headers=self.headers, allow_redirects=False)
-        if resp.status_code != 201: raise Exception(
-            'Failed to create rack {0}: status {1}: {2}'
-            .format(rack_name, resp.status_code, resp.reason))
-        else : 
-            self.rack = resp.json()
-            logging.debug('Rack created {0}({1})'.format(self.rack['name'], 
-            self.rack['id']))   
+    def get_device_role(self, device_role_name, color):
+        params = {'name' : device_role_name}
 
-    def get_device_role(self):
-        device_role_name = self.config['DEFAULT']['device_role']
-        resp = requests.get('{0}/dcim/device-roles/?name={1}&slug={2}'.format(
-            self.base_url, device_role_name, device_role_name),
-            headers=self.headers).json()
-        if len(resp['results']) == 0:
-            self.create_device_role(device_role_name)
-        else: self.device_role = resp['results'][0]
-    
-    def create_device_role(self, device_role_name):
-        device_role_color = self.config['DEFAULT']['device_role_color']
+        self.device_role = self.query_get('dcim/device-roles', params)
+        if self.device_role == None: self.create_device_role(device_role_name,
+            color)
+        
+    def create_device_role(self, device_role_name, device_role_color):
         logging.debug('Creating device role ' + device_role_name)
         data = {'name' : device_role_name, 'slug' : device_role_name, 
         'color' : device_role_color}
 
-        resp = requests.post(self.base_url + '/dcim/device-roles/', json=data,
-                            headers=self.headers, allow_redirects=False)
-        if resp.status_code != 201: raise Exception(
-            'Failed to create device role {0}: status {1}: {2}'
-            .format(device_role_name, resp.status_code, resp.reason))
-        else : 
-            self.device_role = resp.json()
-            logging.debug('Rack created {0}({1})'.format(
-                self.device_role['name'], self.device_role['id']))
+        self.device_role = self.query_post('dcim/device-roles', data)
+        logging.debug('Device role created {0}({1})'.format(self.device_role['name'], 
+        self.device_role['id']))
 
-    def get_manufacturer(self, manufacturer):        
-        resp = requests.get('{0}/dcim/manufacturers/?name={1}'.format(
-            self.base_url, manufacturer),headers=self.headers).json()
+    def get_manufacturer(self, manufacturer):
+        param = {'name' : manufacturer}
 
-        if len(resp['results']) == 0:
-            self.create_manufacturer(manufacturer)
-        else: self.manufacturer = resp['results'][0]
+        self.manufacturer = self.query_get('dcim/manufacturers', param)
+        if self.manufacturer == None : self.create_manufacturer(manufacturer)
 
     def create_manufacturer(self, manufacturer):
         logging.debug('Creating manufacturer ' + manufacturer)
         data = {'name' : manufacturer, 'slug' : manufacturer}
-        resp = requests.post(self.base_url + '/dcim/manufacturers/', 
-        json=data, headers=self.headers, allow_redirects=False)
-
-        if resp.status_code != 201: raise Exception(
-            'Failed to create manufacturer {0}: status {1}: {2}'
-            .format(manufacturer, resp.status_code, resp.reason))
-        else : 
-            self.manufacturer = resp.json()
-            logging.debug('Manufacturer created {0}({1})'.format(
-                self.manufacturer['name'], self.manufacturer['id']))
+        
+        self.manufacturer = self.query_post('dcim/manufacturers', data)
+        logging.debug('Manufacturer created {0}({1})'.format(
+            self.manufacturer['name'], self.manufacturer['id']))
 
     def get_device_type(self):
         sysinfo = dmidecode.profile()
@@ -211,36 +190,52 @@ class NetBoxAgent():
 
         self.get_manufacturer(manufacturer)
         
-        resp = requests.get('{0}/dcim/device-types/?name={1}'.format(
-            self.base_url, model_name),headers=self.headers).json()
-
-        if len(resp['results']) == 0:
-            self.create_device_type(model_name,height)
-        else: self.device_type = resp['results'][0]
+        param = {'name' : model_name}
+        self.device_type = self.query_get('dcim/device-types', param)
+        if self.device_type == None: self.create_device_type(model_name,height)        
     
     def create_device_type(self, model_name, height):
         logging.debug('Creating device type ' + model_name)
         data = {'manufacturer' : self.manufacturer['id'], 'model' : model_name, 
         'slug' : model_name, 'u_height': height}
 
-        resp = requests.post(self.base_url + '/dcim/device-types/', 
-        json=data, headers=self.headers, allow_redirects=False)
+        self.device_type = self.query_post('dcim/device-types', data)
+        logging.debug('Device  created {0}({1})'.format(
+            self.device_type['model'], self.device_type['id']))
 
-        if resp.status_code != 201: raise Exception(
-            'Failed to create device type {0}: status {1}: {2}'.format(model_name,
-            resp.status_code, resp.reason))
-        else : 
-            self.device_type = resp.json()
-            logging.debug('Manufacturer created {0}({1})'.format(
-                self.device_type['model'], self.device_type['id']))
-
-    def get_device(self):
-        self.device_name = socket.getfqdn()
-        self.get_device_role()
+    def get_device(self, role, role_color):
+        device_name = socket.getfqdn()
+        self.get_device_role(role, role_color)
         self.get_device_type()
+
+        param = {'name' : device_name, 'manufacturer_id' : self.manufacturer['id'],
+        'role_id' : self.device_role['id'], 'site_id' : self.site['id'], 
+        'rack_group_id' : self.rack_group['id'], 'rack_id' : self.rack['id']}
+
+        self.device = self.query_get('dcim/devices', param)
+        if self.device == None: self.create_device(device_name)
+
+    def create_device(self, device_name):
+        logging.debug('Creating device ' + device_name)
+
+        data = {'name' : device_name, 'device_type' : self.device_type['id'],
+        'device_role' : self.device_role['id'], 'site' : self.site['id'], 
+        'rack' : self.rack['id']}
+
+        self.device = self.query_post('dcim/devices',data)
+
+    def get_interfaces(self):
+        param = {'device_id' : self.device['id']}
+
+        return self.query_get('dcim/interfaces', param)
+
+    def update_interfaces(self):
+        interfaces = self.get_interfaces()
+        
+
 
 if __name__=='__main__':    
     logging.basicConfig(level=logging.DEBUG)
     agent = NetBoxAgent('test.cfg')
+    agent.update_interfaces()
     print('updated')
-    
