@@ -73,8 +73,7 @@ class NetBoxAgent():
         if len(resp['results']) == 0 : return None
         else : return resp['results']
 
-    def query_post(self, obj_name, data):
-        
+    def query_post(self, obj_name, data):        
         resp = requests.post('{0}/{1}/'.format(self.base_url, obj_name), 
         json=data, headers=self.headers, allow_redirects=False)
 
@@ -84,7 +83,24 @@ class NetBoxAgent():
             resp.reason))
         else : 
             return resp.json()
-            
+
+    def query_delete(self, obj_name, id):        
+        resp = requests.delete('{0}/{1}/{2}/'.format(self.base_url, obj_name, 
+        id), headers=self.headers, allow_redirects=False)
+
+        if resp.status_code != 204: raise Exception(
+            'Failed to delete {0} : {1} status {2}: {3}'
+            .format(obj_name, id, resp.status_code, resp.reason))
+
+    def query_patch(self, obj_name, id, data):        
+        resp = requests.patch('{0}/{1}/{2}/'.format(self.base_url, obj_name, 
+        id), json=data, headers=self.headers, allow_redirects=False)
+
+        if resp.status_code != 200: raise Exception(
+            'Failed to patch {0} : {1} status {2}: {3}'
+            .format(obj_name, id, resp.status_code, resp.reason))
+        else : 
+            return resp.json() 
 
     def get_site(self, sitename):        
         params = {'name' : sitename}
@@ -213,8 +229,9 @@ class NetBoxAgent():
         'role_id' : self.device_role['id'], 'site_id' : self.site['id'], 
         'rack_group_id' : self.rack_group['id'], 'rack_id' : self.rack['id']}
 
-        self.device = self.query_get('dcim/devices', param)[0]
-        if self.device == None: self.create_device(device_name)
+        device = self.query_get('dcim/devices', param)
+        if device == None : self.create_device(device_name)
+        else : self.device = device[0]
 
     def create_device(self, device_name):
         logging.debug('Creating device ' + device_name)
@@ -223,7 +240,7 @@ class NetBoxAgent():
         'device_role' : self.device_role['id'], 'site' : self.site['id'], 
         'rack' : self.rack['id']}
 
-        self.device = self.query_post('dcim/devices',data)
+        self.device = self.query_post('dcim/devices',data)        
 
     def get_interfaces(self):
         param = {'device_id' : self.device['id']}
@@ -231,32 +248,87 @@ class NetBoxAgent():
         return self.query_get('dcim/interfaces', param)
 
     def update_interfaces(self):
-        prev_ifaces = self.get_interfaces()
-        prev_ifnames = [d['name'] for d in prev_ifaces]
+        logging.debug("Updating network interfaces")
+        prev_ifaces = self.get_interfaces()        
         curr_ifaces = netifaces.interfaces()
         gateways =  netifaces.gateways()
 
-        for iface in curr_ifaces:
-            print(iface)
-            if iface not in prev_ifnames:
-                self.create_interface(iface, gateways)
+        if prev_ifaces != None:
+            prev_ifnames = [d['name'] for d in prev_ifaces]
+            for prev_if in prev_ifaces:
+                if prev_if['name'] not in curr_ifaces:                    
+                    self.delete_interface(prev_if)
+
+        for iface in curr_ifaces:            
+            if prev_ifaces is None or iface not in prev_ifnames:
+                self.create_interface(iface, gateways['default'])
 
     def create_interface(self, ifname, gws):
         logging.debug('Creating interface ' + ifname)
-        addrs = netifaces.ifaddresses(ifname)       
+        addrs = netifaces.ifaddresses(ifname)
+        
+        data = {'device' : self.device['id'], 'name' : ifname}
+        if netifaces.AF_LINK in addrs:
+            data['mac_address'] = addrs[netifaces.AF_LINK][0]['addr']
 
-        data = {'device' : self.device['id'], 'name' : ifname, 
-        'mac_address' : addrs[netifaces.AF_LINK]}        
-
+        # TODO: get switch info from lldpd
         if platform.system() == 'Windows':
             pass
         else:            
             pass
 
-        interface = self.query_post('/dcim/interfaces/', data)
+        interface = self.query_post('dcim/interfaces', data)
+        for k,v in addrs.items():            
+            for adr in v:                
+                ipaddr = self.create_ip(adr, k, interface)
+                if (k in gws and gws[k][1] == ifname):
+                    self.update_pri_ip(ipaddr,k)
+
+    def create_ip(self, addr, addr_family, iface):
+        if (addr_family != netifaces.AF_INET and 
+        addr_family != netifaces.AF_INET6):
+            logging.debug('Ignoring non-IP address {0} for {1} '
+            ''.format(addr['addr'], iface['name']))
+            return
+
+        logging.debug('Creating IP address {0} for {1} '.format(
+            addr['addr'], iface['name']))
+
+        if addr_family == netifaces.AF_INET6:
+            address = addr['addr'].replace('%{}'.format(iface['name']), '')
+            netmask = addr['netmask'].split('/')[-1]
+        else:
+            address = addr['addr']
+            netmask = addr['netmask']
+
+        data = {'address' : '{0}/{1}'.format(address, netmask),
+        'interface' : iface['id']}
+        ipaddr = self.query_post('ipam/ip-addresses', data)
+        return ipaddr
+        
+
+    def delete_interface(self, iface):
+        logging.debug("Deleting " + iface['name'])
+        self.query_delete('dcim/interfaces', iface['id'])
+    
+    def update_pri_ip(self, ipaddr, addr_family):
+        logging.debug("Updating Primary IP: " + ipaddr['address'])
+
+        data = {}
+        if addr_family == netifaces.AF_INET:
+            data['primary_ip4'] = ipaddr['id']
+            #data['primary_ip'] = ipaddr['id']
+        elif addr_family == netifaces.AF_INET6:
+            data['primary_ip6'] = ipaddr['id']
+
+        self.query_patch('dcim/devices', self.device['id'], data)
+
+    def update_pci(self):
+        pass
 
 if __name__=='__main__':    
     logging.basicConfig(level=logging.DEBUG)
     agent = NetBoxAgent('test.cfg')
     agent.update_interfaces()
+    agent.update_pci()
     print('updated')
