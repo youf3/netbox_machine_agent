@@ -14,6 +14,14 @@ import requests
 import dmidecode
 import netifaces
 
+# import ptvsd
+
+# # Allow other computers to attach to ptvsd at this IP address and port.
+# ptvsd.enable_attach(address=('165.124.3.73', 3000), redirect_output=True)
+
+# # Pause the program until a remote debugger is attached
+# ptvsd.wait_for_attach()
+
 class NetBoxAgent():    
     def __init__(self, configFile):        
         config, optional_conf = self.load_conf(configFile)
@@ -105,8 +113,9 @@ class NetBoxAgent():
     def get_site(self, sitename):        
         params = {'name' : sitename}
 
-        self.site = self.query_get('dcim/sites',params)[0]
-        if self.site == None : self.create_site(sitename)
+        site = self.query_get('dcim/sites',params)
+        if site == None : self.create_site(sitename)
+        else: self.site = site[0]
 
     def create_site(self, sitename):
         logging.debug('creating site ' + sitename)
@@ -118,8 +127,9 @@ class NetBoxAgent():
     def get_rack_group(self, rack_group_name):
         params = {'site_id' : self.site['id'], 'name' : rack_group_name}
 
-        self.rack_group = self.query_get('dcim/rack-groups',params)[0]
-        if self.rack_group == None: self.create_rack_group(rack_group_name)
+        rack_group = self.query_get('dcim/rack-groups',params)
+        if rack_group == None: self.create_rack_group(rack_group_name)
+        else: self.rack_group = rack_group[0]
 
     def create_rack_group(self, rack_group_name):        
         logging.debug('Creating rack group ' + rack_group_name)
@@ -136,8 +146,9 @@ class NetBoxAgent():
         if hasattr(self, 'rack_group'):
             params['group_id'] = self.rack_group['id']
         
-        self.rack = self.query_get('dcim/racks',params)[0]
-        if self.rack == None: self.create_rack(rack_name)        
+        rack = self.query_get('dcim/racks',params)
+        if rack == None: self.create_rack(rack_name)
+        else: self.rack = rack[0]
         
     # TODO: rack_role and tenent (type and width?)
     def create_rack(self, rack_name):
@@ -156,9 +167,10 @@ class NetBoxAgent():
     def get_device_role(self, device_role_name, color):
         params = {'name' : device_role_name}
 
-        self.device_role = self.query_get('dcim/device-roles', params)[0]
-        if self.device_role == None: self.create_device_role(device_role_name,
+        device_role = self.query_get('dcim/device-roles', params)
+        if device_role == None: self.create_device_role(device_role_name,
             color)
+        else: self.device_role = device_role[0]
         
     def create_device_role(self, device_role_name, device_role_color):
         logging.debug('Creating device role ' + device_role_name)
@@ -172,8 +184,9 @@ class NetBoxAgent():
     def get_manufacturer(self, manufacturer):
         param = {'name' : manufacturer}
 
-        self.manufacturer = self.query_get('dcim/manufacturers', param)[0]
-        if self.manufacturer == None : self.create_manufacturer(manufacturer)
+        manufacturers = self.query_get('dcim/manufacturers', param)
+        if manufacturers == None : self.create_manufacturer(manufacturer)
+        else : self.manufacturer = manufacturers[0]
 
     def create_manufacturer(self, manufacturer):
         logging.debug('Creating manufacturer ' + manufacturer)
@@ -207,9 +220,10 @@ class NetBoxAgent():
 
         self.get_manufacturer(manufacturer)
         
-        param = {'name' : model_name}
-        self.device_type = self.query_get('dcim/device-types', param)[0]
-        if self.device_type == None: self.create_device_type(model_name,height)        
+        param = {'model' : model_name}
+        device_type = self.query_get('dcim/device-types', param)
+        if device_type == None: self.create_device_type(model_name,height)
+        else : self.device_type = device_type[0]
     
     def create_device_type(self, model_name, height):
         logging.debug('Creating device type ' + model_name)

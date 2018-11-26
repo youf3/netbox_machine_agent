@@ -21,11 +21,15 @@
             "name": "Python: Attach",
             "type": "python",
             "request": "attach",
-            "localRoot": "${workspaceFolder}",
-            "remoteRoot": "${workspaceFolder}",
+            "pathMappings": [
+                {
+                "localRoot": "${workspaceFolder}",
+                "remoteRoot": "~/netmon_agent"
+                }
+            ],
             "port": 3000,
-            "secret": "my_secret",
-            "host": "localhost"
+            //"secret": "my_secret",
+            "host": "165.124.3.73"
         },
         {
             "name": "Python: Terminal (integrated)",
