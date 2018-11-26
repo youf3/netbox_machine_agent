@@ -7,11 +7,12 @@ import os
 import re
 import socket
 import urllib
+import platform
 
 import requests
 
 import dmidecode
-
+import netifaces
 
 class NetBoxAgent():    
     def __init__(self, configFile):        
@@ -70,7 +71,7 @@ class NetBoxAgent():
             self.base_url, obj_name, param_str),headers=self.headers).json()
 
         if len(resp['results']) == 0 : return None
-        else : return resp['results'][0]
+        else : return resp['results']
 
     def query_post(self, obj_name, data):
         
@@ -88,7 +89,7 @@ class NetBoxAgent():
     def get_site(self, sitename):        
         params = {'name' : sitename}
 
-        self.site = self.query_get('dcim/sites',params)
+        self.site = self.query_get('dcim/sites',params)[0]
         if self.site == None : self.create_site(sitename)
 
     def create_site(self, sitename):
@@ -101,7 +102,7 @@ class NetBoxAgent():
     def get_rack_group(self, rack_group_name):
         params = {'site_id' : self.site['id'], 'name' : rack_group_name}
 
-        self.rack_group = self.query_get('dcim/rack-groups',params)
+        self.rack_group = self.query_get('dcim/rack-groups',params)[0]
         if self.rack_group == None: self.create_rack_group(rack_group_name)
 
     def create_rack_group(self, rack_group_name):        
@@ -119,7 +120,7 @@ class NetBoxAgent():
         if hasattr(self, 'rack_group'):
             params['group_id'] = self.rack_group['id']
         
-        self.rack = self.query_get('dcim/racks',params)
+        self.rack = self.query_get('dcim/racks',params)[0]
         if self.rack == None: self.create_rack(rack_name)        
         
     # TODO: rack_role and tenent (type and width?)
@@ -139,7 +140,7 @@ class NetBoxAgent():
     def get_device_role(self, device_role_name, color):
         params = {'name' : device_role_name}
 
-        self.device_role = self.query_get('dcim/device-roles', params)
+        self.device_role = self.query_get('dcim/device-roles', params)[0]
         if self.device_role == None: self.create_device_role(device_role_name,
             color)
         
@@ -155,7 +156,7 @@ class NetBoxAgent():
     def get_manufacturer(self, manufacturer):
         param = {'name' : manufacturer}
 
-        self.manufacturer = self.query_get('dcim/manufacturers', param)
+        self.manufacturer = self.query_get('dcim/manufacturers', param)[0]
         if self.manufacturer == None : self.create_manufacturer(manufacturer)
 
     def create_manufacturer(self, manufacturer):
@@ -172,7 +173,7 @@ class NetBoxAgent():
         for item in sysinfo:
             if 'system' in item[0] and ('Manufacturer' in item[1] and 
             'Product Name' in item[1]):                
-                manufacturer = re.sub(r'[^-a-zA-Z0-9_]','_',
+                manufacturer = re.sub(r'([^-a-zA-Z0-9_])+','_',
                 item[1]['Manufacturer'])
                 model_name = re.sub(r'[^-a-zA-Z0-9_]','_',
                 item[1]['Product Name'])
@@ -191,7 +192,7 @@ class NetBoxAgent():
         self.get_manufacturer(manufacturer)
         
         param = {'name' : model_name}
-        self.device_type = self.query_get('dcim/device-types', param)
+        self.device_type = self.query_get('dcim/device-types', param)[0]
         if self.device_type == None: self.create_device_type(model_name,height)        
     
     def create_device_type(self, model_name, height):
@@ -212,7 +213,7 @@ class NetBoxAgent():
         'role_id' : self.device_role['id'], 'site_id' : self.site['id'], 
         'rack_group_id' : self.rack_group['id'], 'rack_id' : self.rack['id']}
 
-        self.device = self.query_get('dcim/devices', param)
+        self.device = self.query_get('dcim/devices', param)[0]
         if self.device == None: self.create_device(device_name)
 
     def create_device(self, device_name):
@@ -230,9 +231,29 @@ class NetBoxAgent():
         return self.query_get('dcim/interfaces', param)
 
     def update_interfaces(self):
-        interfaces = self.get_interfaces()
-        
+        prev_ifaces = self.get_interfaces()
+        prev_ifnames = [d['name'] for d in prev_ifaces]
+        curr_ifaces = netifaces.interfaces()
+        gateways =  netifaces.gateways()
 
+        for iface in curr_ifaces:
+            print(iface)
+            if iface not in prev_ifnames:
+                self.create_interface(iface, gateways)
+
+    def create_interface(self, ifname, gws):
+        logging.debug('Creating interface ' + ifname)
+        addrs = netifaces.ifaddresses(ifname)       
+
+        data = {'device' : self.device['id'], 'name' : ifname, 
+        'mac_address' : addrs[netifaces.AF_LINK]}        
+
+        if platform.system() == 'Windows':
+            pass
+        else:            
+            pass
+
+        interface = self.query_post('/dcim/interfaces/', data)
 
 if __name__=='__main__':    
     logging.basicConfig(level=logging.DEBUG)

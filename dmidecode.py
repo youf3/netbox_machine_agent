@@ -1,5 +1,5 @@
 from __future__ import print_function
-import os, sys
+import os, sys, platform, urllib
 
 __version__ = "0.9.0"
 
@@ -89,17 +89,22 @@ def profile():
 
 def _get_output():
     import subprocess
-    try:
-        output = subprocess.check_output(
-        'PATH=$PATH:/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin '
-        'sudo dmidecode', shell=True)
-    except Exception as e:
-        print(e, file=sys.stderr)
-        if str(e).find("command not found") == -1:
-            print("please install dmidecode", file=sys.stderr)
-            print("e.g. sudo apt install dmidecode",file=sys.stderr)
 
-        sys.exit(1)
+    if platform.system() == 'Windows':
+        output = subprocess.check_output(".\dmidecode.exe")
+    else:
+        try:
+            output = subprocess.check_output(
+            'PATH=$PATH:/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin '
+            'sudo dmidecode', shell=True)            
+            print('output')
+        except Exception as e:
+            print(e, file=sys.stderr)
+            if str(e).find("command not found") == -1:
+                print("please install dmidecode", file=sys.stderr)
+                print("e.g. sudo apt install dmidecode",file=sys.stderr)
+
+            sys.exit(1)
     return output.decode()
 
 
