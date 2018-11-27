@@ -28,7 +28,7 @@ def run_command(cmd, ignore_stderr = False):
         
     return [str(outs,'UTF-8'), str(errs,'UTF-8')]
 
-def get_hw_linux(hwclass):
+def get_hw_linux(hwclass, device_id):
     out, err = run_command('lshw -class ' + hwclass)
     HW_strs = out.split('  *-' + hwclass)
     HWs = []
@@ -38,7 +38,10 @@ def get_hw_linux(hwclass):
         HW = {}
         for line in HW_str.splitlines()[1:]:
             prop = line.strip().split(':',1)
-            HW[prop[0]] = prop[1].strip()
+            if prop[0] == 'bus info': prop[1] += str(device_id) + '@' + prop[1].strip()
+            else : prop[1].strip()
+
+            HW[prop[0]] = prop[1]
             if 'driver=nvme' in prop[1]: is_NVMe = True
         HWs.append(HW)
 
@@ -49,7 +52,7 @@ def get_hw_linux(hwclass):
 def get_nvme_model(HWs):
     for hw in HWs:
         if 'driver=nvme' in hw['configuration']:
-            pci_addr = hw['bus info'].replace('pci@','').replace(':','\:')
+            pci_addr = hw['bus info'].split('@')[-1].replace(':','\:')
             out,err = run_command('cat /sys/bus/pci/devices/{0}/nvme/nvme*/model'.format(pci_addr))
             if err != '':
                 raise Exception('failed to get NVMe model name' + err)

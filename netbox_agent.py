@@ -386,10 +386,10 @@ class NetBoxAgent():
             pass
         elif platform.system() == 'Linux':
             import lshw
-            nics = lshw.get_hw_linux('network')            
+            nics = lshw.get_hw_linux('network', self.device['id'])            
             #self.update_hw(nics, 'product')
             phy_nics = [d for d in nics if 'product' in d]
-            storages = lshw.get_hw_linux('storage')
+            storages = lshw.get_hw_linux('storage', self.device['id'])
             hw = phy_nics + storages
             self.update_hw(hw)
         elif platform.system() == 'Darwin':
@@ -431,8 +431,7 @@ class NetBoxAgent():
         if 'product' in hw:
             data['name'] = hw['product']
         else:
-            data['name'] = hw['description']
-        
+            data['name'] = hw['description']       
 
         self.query_post('dcim/inventory-items',data)
 
