@@ -22,7 +22,7 @@ class NetBoxAgent():
         if 'rack_group' in optional_conf: 
             self.get_rack_group(optional_conf['rack_group'])
         self.get_rack(config['DEFAULT']['rack_name'])        
-        self.get_device(self.config['DEFAULT']['device_role'], 
+        self.get_device(config['DEFAULT']['device_role'], 
         config['DEFAULT']['device_role_color'])
         
     
@@ -55,14 +55,14 @@ class NetBoxAgent():
 
     def load_conf(self, configFile):        
         if not os.path.exists(configFile): self.create_conf(configFile)            
-        self.config = configparser.ConfigParser()
-        self.config.read(configFile)
-        self.base_url = self.config['DEFAULT']['api_base_url']
-        self.token = 'Token {0}'.format(self.config['DEFAULT']['Token'])
+        config = configparser.ConfigParser()
+        config.read(configFile)
+        self.base_url = config['DEFAULT']['api_base_url']
+        self.token = 'Token {0}'.format(config['DEFAULT']['Token'])
         
-        optional_conf = self.config['Optional']
+        optional_conf = config['Optional']
 
-        return self.config, optional_conf
+        return config, optional_conf
 
     def query_get(self, obj_name, params):
         param_str = urllib.parse.urlencode(params)
