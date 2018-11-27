@@ -331,21 +331,21 @@ class NetBoxAgent():
         param = {'device_id' : self.device['id'], 'interface_id' : prev_iface['id']}
         prev_addrs = self.get_addresses(param)
         curr_addrs = netifaces.ifaddresses(iface)
-        prev_ips = None
+        prev_ips = []
         if prev_addrs != None: 
             prev_ips = [d['address'].split('/')[0] for d in prev_addrs]
-        curr_ips = None               
+        curr_ips = []             
         
         if netifaces.AF_INET in curr_addrs:
             for curr_ipv4 in curr_addrs[netifaces.AF_INET]:
-                if prev_ips == None or curr_ipv4['addr'] not in prev_ips:
+                if curr_ipv4['addr'] not in prev_ips:
                     self.create_ip(curr_ipv4, netifaces.AF_INET, prev_iface)
             curr_ips = [curr_addrs[k][0]['addr'] for k in [netifaces.AF_INET]]
 
         if netifaces.AF_INET6 in curr_addrs:
             for curr_ipv6 in curr_addrs[netifaces.AF_INET6]:
                 curr_ipv6_addr = curr_ipv6['addr'].split('%')[0]
-                if prev_ips == None or curr_ipv6_addr not in prev_ips:
+                if curr_ipv6_addr not in prev_ips:
                     self.create_ip(curr_ipv6, netifaces.AF_INET6, prev_iface)
             for ip6 in curr_addrs[netifaces.AF_INET6]:
                 curr_ips.append(ip6['addr'].replace('%{}'.format(iface),''))
@@ -354,7 +354,7 @@ class NetBoxAgent():
             return            
         for prev_addr in prev_addrs:
             prev_ip = prev_addr['address'].split('/')[0]
-            if curr_ips == None or prev_ip not in curr_ips:
+            if len(curr_ips) == 0 or prev_ip not in curr_ips:
                 self.delete_ip(prev_addr)
 
     def delete_ip(self, ip):
@@ -378,13 +378,14 @@ class NetBoxAgent():
             pass
         elif platform.system() == 'Linux':
             import lshw
-            nics = lshw.get_hw('network')            
+            nics = lshw.get_hw_linux('network')            
             #self.update_hw(nics, 'product')
             phy_nics = [d for d in nics if 'product' in d]
-            storages = lshw.get_hw('storage')
+            storages = lshw.get_hw_linux('storage')
             hw = phy_nics + storages
             self.update_hw(hw)
-            
+        elif platform.system() == 'Darwin':
+            pass
         else:
             pass
 

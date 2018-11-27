@@ -28,7 +28,7 @@ def run_command(cmd, ignore_stderr = False):
         
     return [str(outs,'UTF-8'), str(errs,'UTF-8')]
 
-def get_hw(hwclass):
+def get_hw_linux(hwclass):
     out, err = run_command('lshw -class ' + hwclass)
     HW_strs = out.split('  *-' + hwclass)
     HWs = []
