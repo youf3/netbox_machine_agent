@@ -21,7 +21,12 @@ class NetBoxAgent():
 
         if 'rack_group' in optional_conf: 
             self.get_rack_group(optional_conf['rack_group'])
-        self.get_rack(config['DEFAULT']['rack_name'])        
+        self.get_rack(config['DEFAULT']['rack_name'])
+        if 'position' in optional_conf:
+            self.rack_position = optional_conf['position']
+            self.rack_face = int(optional_conf['face'])
+        else: self.rack_position = None
+
         self.get_device(config['DEFAULT']['device_role'], 
         config['DEFAULT']['device_role_color'])
         
@@ -47,6 +52,8 @@ class NetBoxAgent():
             'Device Role Color Hex (e.g. aa1409): ')
         config['Optional']['position'] = input(
             'Mounted rack position (lowest) : ')
+        config['Optional']['face'] = input(
+            'Mounted rack face (0 for front, 1 for back) : ')
 
         with open(configFile, 'w') as config_file:
             config.write(config_file)
@@ -231,9 +238,7 @@ class NetBoxAgent():
         self.get_device_role(role, role_color)
         self.get_device_type()
 
-        param = {'name' : device_name, 'manufacturer_id' : self.manufacturer['id']}#,
-        #'role_id' : self.device_role['id'], 'site_id' : self.site['id'], 
-        #'rack_group_id' : self.rack_group['id'], 'rack_id' : self.rack['id']}
+        param = {'name' : device_name, 'manufacturer_id' : self.manufacturer['id']}
 
         device = self.query_get('dcim/devices', param)
         if device == None : self.create_device(device_name)
@@ -246,6 +251,10 @@ class NetBoxAgent():
         'device_role' : self.device_role['id'], 'site' : self.site['id'], 
         'rack' : self.rack['id']}
 
+        if self.rack_position != None:
+            data['position'] = self.rack_position
+            data['face'] = self.rack_face
+
         self.device = self.query_post('dcim/devices',data)        
 
     def update_device(self, prev_device):
@@ -254,6 +263,9 @@ class NetBoxAgent():
         'role_id' : self.device_role['id'], 'site_id' : self.site['id'], 
         'rack_group_id' : self.rack_group['id'], 'rack_id' : self.rack['id']}
 
+        if self.rack_position != None:
+            data['position'] = self.rack_position
+            data['face'] = self.rack_face
         return self.query_patch('dcim/devices', prev_device['id'],data)
 
     def get_interfaces(self):
