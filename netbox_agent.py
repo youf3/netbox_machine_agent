@@ -10,17 +10,8 @@ import urllib
 import platform
 
 import requests
-
 import dmidecode
 import netifaces
-
-# import ptvsd
-
-# # Allow other computers to attach to ptvsd at this IP address and port.
-# ptvsd.enable_attach(address=('165.124.3.73', 3000), redirect_output=True)
-
-# # Pause the program until a remote debugger is attached
-# ptvsd.wait_for_attach()
 
 class NetBoxAgent():    
     def __init__(self, configFile):        
@@ -78,7 +69,8 @@ class NetBoxAgent():
         resp = requests.get('{0}/{1}/?{2}'.format(
             self.base_url, obj_name, param_str),headers=self.headers).json()
 
-        if len(resp['results']) == 0 : return None
+        if 'detail' in resp and resp['detail'] == 'Not found.': return None
+        elif len(resp['results']) == 0 : return None
         else : return resp['results']
 
     def query_post(self, obj_name, data):        
@@ -235,7 +227,7 @@ class NetBoxAgent():
             self.device_type['model'], self.device_type['id']))
 
     def get_device(self, role, role_color):
-        device_name = socket.getfqdn()
+        device_name = socket.gethostname()
         self.get_device_role(role, role_color)
         self.get_device_type()
 
@@ -261,12 +253,16 @@ class NetBoxAgent():
 
         return self.query_get('dcim/interfaces', param)
 
+    def get_addresses(self, param):        
+        return self.query_get('ipam/ip-addresses', param)
+
     def update_interfaces(self):
         logging.debug("Updating network interfaces")
         prev_ifaces = self.get_interfaces()        
         curr_ifaces = netifaces.interfaces()
         gateways =  netifaces.gateways()
 
+        # Delete interfaces not exist
         if prev_ifaces != None:
             prev_ifnames = [d['name'] for d in prev_ifaces]
             for prev_if in prev_ifaces:
@@ -276,6 +272,9 @@ class NetBoxAgent():
         for iface in curr_ifaces:            
             if prev_ifaces is None or iface not in prev_ifnames:
                 self.create_interface(iface, gateways['default'])
+            elif iface in prev_ifnames:
+                prev_iface = [d for d in prev_ifaces if d['name'] == iface][0]
+                self.update_addresses(iface, prev_iface)
 
     def create_interface(self, ifname, gws):
         logging.debug('Creating interface ' + ifname)
@@ -288,7 +287,11 @@ class NetBoxAgent():
         # TODO: get switch info from lldpd
         if platform.system() == 'Windows':
             pass
-        else:            
+        elif platform.system() == 'Linux':
+            import ethtool
+            ff = ethtool.get_formfactor_id(ifname)
+            data['form_factor'] = ff
+        else:
             pass
 
         interface = self.query_post('dcim/interfaces', data)
@@ -299,8 +302,7 @@ class NetBoxAgent():
                     self.update_pri_ip(ipaddr,k)
 
     def create_ip(self, addr, addr_family, iface):
-        if (addr_family != netifaces.AF_INET and 
-        addr_family != netifaces.AF_INET6):
+        if (addr_family != netifaces.AF_INET and addr_family != netifaces.AF_INET6):
             logging.debug('Ignoring non-IP address {0} for {1} '
             ''.format(addr['addr'], iface['name']))
             return
@@ -318,13 +320,45 @@ class NetBoxAgent():
         data = {'address' : '{0}/{1}'.format(address, netmask),
         'interface' : iface['id']}
         ipaddr = self.query_post('ipam/ip-addresses', data)
-        return ipaddr
-        
+        return ipaddr        
 
     def delete_interface(self, iface):
         logging.debug("Deleting " + iface['name'])
         self.query_delete('dcim/interfaces', iface['id'])
-    
+
+    def update_addresses(self, iface, prev_iface):
+        logging.debug("Updating interface address :" + iface)
+        param = {'device_id' : self.device['id'], 'interface_id' : prev_iface['id']}
+        prev_addrs = self.get_addresses(param)
+        curr_addrs = netifaces.ifaddresses(iface)
+        if prev_addrs != None: 
+            prev_ips = [d['address'].split('/')[0] for d in prev_addrs]
+        curr_ips = None               
+        
+        if netifaces.AF_INET in curr_addrs:
+            for curr_ipv4 in curr_addrs[netifaces.AF_INET]:
+                if curr_ipv4['addr'] not in prev_ips:
+                    self.create_ip(curr_ipv4, netifaces.AF_INET, prev_iface)
+            curr_ips = [curr_addrs[k][0]['addr'] for k in [netifaces.AF_INET]]
+
+        if netifaces.AF_INET6 in curr_addrs:
+            for curr_ipv6 in curr_addrs[netifaces.AF_INET6]:
+                if curr_ipv6['addr'] not in prev_ips:
+                    self.create_ip(curr_ipv6, netifaces.AF_INET6, prev_iface)
+            for ip6 in curr_addrs[netifaces.AF_INET6]:
+                curr_ips.append(ip6['addr'].replace('%{}'.format(iface),''))
+
+        if prev_addrs == None:
+            return            
+        for prev_addr in prev_addrs:
+            prev_ip = prev_addr['address'].split('/')[0]
+            if curr_ips == None or prev_ip not in curr_ips:
+                self.delete_ip(prev_addr)
+
+    def delete_ip(self, ip):
+        logging.debug("Deleting IP address " + ip['address'])
+        self.query_delete('ipam/ip-addresses', ip['id'])
+        
     def update_pri_ip(self, ipaddr, addr_family):
         logging.debug("Updating Primary IP: " + ipaddr['address'])
 
