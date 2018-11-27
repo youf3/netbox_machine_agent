@@ -398,11 +398,12 @@ class NetBoxAgent():
             pass
         elif platform.system() == 'Linux':
             import lshw
+            cpus = lshw.get_hw_linux('cpu', self.device['id'])
             nics = lshw.get_hw_linux('network', self.device['id'])            
             #self.update_hw(nics, 'product')
             phy_nics = [d for d in nics if 'product' in d]
             storages = lshw.get_hw_linux('storage', self.device['id'])
-            hw = phy_nics + storages
+            hw = cpus + phy_nics + storages
             self.update_hw(hw)
         elif platform.system() == 'Darwin':
             pass
@@ -427,7 +428,7 @@ class NetBoxAgent():
         matching_devices = [d for d in curr_hws if d['bus info'] == prev_hw['asset_tag']]
         if len(matching_devices) == 0:
             return True
-        elif matching_devices[0]['description'] != prev_hw['description']:
+        elif matching_devices[0]['description'].strip() != prev_hw['description']:
             return True
         else: return False
 

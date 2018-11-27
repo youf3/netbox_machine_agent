@@ -32,32 +32,31 @@ def get_hw_linux(hwclass, device_id):
     out, err = run_command('lshw -class ' + hwclass)
     HW_strs = out.split('  *-' + hwclass)
     HWs = []
-    is_NVMe = False
+    
 
     for HW_str in HW_strs[1:]:
         HW = {}
         for line in HW_str.splitlines()[1:]:
             prop = line.strip().split(':',1)
-            if prop[0] == 'bus info': prop[1] = str(device_id) + '@' + prop[1].strip()
+            if prop[0] == 'bus info':                 
+                prop[1] = str(device_id) + '@' + prop[1].strip()                
             else : prop[1].strip()
 
             HW[prop[0]] = prop[1]
-            if 'driver=nvme' in prop[1]: is_NVMe = True
-        HWs.append(HW)
 
-    if hwclass == 'storage' and is_NVMe:
-        HWs = get_nvme_model(HWs)
+            if 'driver=nvme' in prop[1]: 
+                pci_addr = HW['bus info'].split('@')[-1].replace(':','\:')
+                out,err = run_command('cat /sys/bus/pci/devices/{0}/nvme/nvme*/model'.format(pci_addr))
+                if err != '':
+                    raise Exception('failed to get NVMe model name' + err)
+                HW['product'] = out.strip()
+
+        if hwclass == 'cpu':
+            HW['description'] = 'Central Processing Unit'
+
+        HWs.append(HW)    
     return HWs
 
-def get_nvme_model(HWs):
-    for hw in HWs:
-        if 'driver=nvme' in hw['configuration']:
-            pci_addr = hw['bus info'].split('@')[-1].replace(':','\:')
-            out,err = run_command('cat /sys/bus/pci/devices/{0}/nvme/nvme*/model'.format(pci_addr))
-            if err != '':
-                raise Exception('failed to get NVMe model name' + err)
-            hw['product'] = out.strip()
-    return HWs
 
 if __name__ == "__main__":
     pass
