@@ -14,7 +14,11 @@ import dmidecode
 import netifaces
 
 class NetBoxAgent():    
-    def __init__(self, configFile):        
+    def __init__(self, configFile):
+
+        if not os.path.exists(configFile):
+            self.create_conf(configFile)
+
         config, optional_conf = self.load_conf(configFile)
         self.create_header(config['DEFAULT']['Token'])
         self.get_site(config['DEFAULT']['sitename'])
@@ -51,7 +55,7 @@ class NetBoxAgent():
         config['DEFAULT']['device_role_color'] = input(
             'Device Role Color Hex (e.g. aa1409): ')
         config['Optional']['position'] = input(
-            'Mounted rack position (lowest) : ')
+            'Mounted rack position (lowest, from 1) : ')
         config['Optional']['face'] = input(
             'Mounted rack face (0 for front, 1 for back) : ')
 
@@ -455,7 +459,7 @@ class NetBoxAgent():
 
 if __name__=='__main__':    
     logging.basicConfig(level=logging.DEBUG)
-    agent = NetBoxAgent('test.cfg')
+    agent = NetBoxAgent('example.cfg')
     agent.update_interfaces()
     agent.update_pci()
     print('updated')
