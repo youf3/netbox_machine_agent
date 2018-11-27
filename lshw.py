@@ -38,7 +38,7 @@ def get_hw_linux(hwclass, device_id):
         HW = {}
         for line in HW_str.splitlines()[1:]:
             prop = line.strip().split(':',1)
-            if prop[0] == 'bus info': prop[1] += str(device_id) + '@' + prop[1].strip()
+            if prop[0] == 'bus info': prop[1] = str(device_id) + '@' + prop[1].strip()
             else : prop[1].strip()
 
             HW[prop[0]] = prop[1]
