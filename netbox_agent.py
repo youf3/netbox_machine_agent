@@ -231,13 +231,13 @@ class NetBoxAgent():
         self.get_device_role(role, role_color)
         self.get_device_type()
 
-        param = {'name' : device_name, 'manufacturer_id' : self.manufacturer['id'],
-        'role_id' : self.device_role['id'], 'site_id' : self.site['id'], 
-        'rack_group_id' : self.rack_group['id'], 'rack_id' : self.rack['id']}
+        param = {'name' : device_name, 'manufacturer_id' : self.manufacturer['id']}#,
+        #'role_id' : self.device_role['id'], 'site_id' : self.site['id'], 
+        #'rack_group_id' : self.rack_group['id'], 'rack_id' : self.rack['id']}
 
         device = self.query_get('dcim/devices', param)
         if device == None : self.create_device(device_name)
-        else : self.device = device[0]
+        else : self.device = self.update_device(device[0])
 
     def create_device(self, device_name):
         logging.debug('Creating device ' + device_name)
@@ -247,6 +247,14 @@ class NetBoxAgent():
         'rack' : self.rack['id']}
 
         self.device = self.query_post('dcim/devices',data)        
+
+    def update_device(self, prev_device):
+        logging.debug('Updating Device : ' + prev_device['name'])
+        data = {'name' : prev_device['name'], 'manufacturer_id' : self.manufacturer['id'],
+        'role_id' : self.device_role['id'], 'site_id' : self.site['id'], 
+        'rack_group_id' : self.rack_group['id'], 'rack_id' : self.rack['id']}
+
+        return self.query_patch('dcim/devices', prev_device['id'],data)
 
     def get_interfaces(self):
         param = {'device_id' : self.device['id']}
