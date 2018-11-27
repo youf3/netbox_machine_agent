@@ -331,19 +331,21 @@ class NetBoxAgent():
         param = {'device_id' : self.device['id'], 'interface_id' : prev_iface['id']}
         prev_addrs = self.get_addresses(param)
         curr_addrs = netifaces.ifaddresses(iface)
+        prev_ips = None
         if prev_addrs != None: 
             prev_ips = [d['address'].split('/')[0] for d in prev_addrs]
         curr_ips = None               
         
         if netifaces.AF_INET in curr_addrs:
             for curr_ipv4 in curr_addrs[netifaces.AF_INET]:
-                if curr_ipv4['addr'] not in prev_ips:
+                if prev_ips == None or curr_ipv4['addr'] not in prev_ips:
                     self.create_ip(curr_ipv4, netifaces.AF_INET, prev_iface)
             curr_ips = [curr_addrs[k][0]['addr'] for k in [netifaces.AF_INET]]
 
         if netifaces.AF_INET6 in curr_addrs:
             for curr_ipv6 in curr_addrs[netifaces.AF_INET6]:
-                if curr_ipv6['addr'] not in prev_ips:
+                curr_ipv6_addr = curr_ipv6['addr'].split('%')[0]
+                if prev_ips == None or curr_ipv6_addr not in prev_ips:
                     self.create_ip(curr_ipv6, netifaces.AF_INET6, prev_iface)
             for ip6 in curr_addrs[netifaces.AF_INET6]:
                 curr_ips.append(ip6['addr'].replace('%{}'.format(iface),''))
@@ -372,7 +374,63 @@ class NetBoxAgent():
         self.query_patch('dcim/devices', self.device['id'], data)
 
     def update_pci(self):
-        pass
+        if platform.system() == 'Windows':
+            pass
+        elif platform.system() == 'Linux':
+            import lshw
+            nics = lshw.get_hw('network')            
+            #self.update_hw(nics, 'product')
+            phy_nics = [d for d in nics if 'product' in d]
+            storages = lshw.get_hw('storage')
+            hw = phy_nics + storages
+            self.update_hw(hw)
+            
+        else:
+            pass
+
+    def update_hw(self, hws):
+        prev_hws = self.get_hw()
+        if prev_hws != None:
+            prev_hws_tags = [d['asset_tag'] for d in prev_hws]
+            curr_hws_tags = [d['bus info'] for d in hws if 'bus info' in d]
+
+            for prev_hw in prev_hws:
+                if prev_hw['asset_tag'] not in curr_hws_tags or self.is_hw_changed(prev_hw, hws):
+                    self.delete_hw(prev_hw)
+
+        for hw in hws:            
+            if prev_hws == None or hw['bus info'] not in prev_hws_tags:
+                self.create_inventory(hw)
+    
+    def is_hw_changed(self, prev_hw, curr_hws):
+        matching_devices = [d for d in curr_hws if d['bus info'] == prev_hw['asset_tag']]
+        if len(matching_devices) == 0:
+            return True
+        elif matching_devices[0]['description'] != prev_hw['description']:
+            return True
+        else: return False
+
+    def get_hw(self):
+        params = {'device_id' : self.device['id']}
+        return self.query_get('dcim/inventory-items', params)
+
+    def create_inventory(self, hw):
+        logging.debug("Creating HW inventory " + hw['description'])        
+        data = {'device' : self.device['id'], 'asset_tag' : hw['bus info'],
+        'description' : hw['description']}
+        
+        if 'product' in hw:
+            data['name'] = hw['product']
+        else:
+            data['name'] = hw['description']
+        
+
+        self.query_post('dcim/inventory-items',data)
+
+    def delete_hw(self, hw):
+        logging.debug('Deleting HW inventory' + hw['name'])
+        self.query_delete('dcim/inventory-items', hw['id'])
+        
 
 if __name__=='__main__':    
     logging.basicConfig(level=logging.DEBUG)
