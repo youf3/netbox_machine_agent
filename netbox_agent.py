@@ -49,15 +49,19 @@ class NetBoxAgent():
         config['DEFAULT']['api_base_url'] = '{0}/api'.format(addr)
         config['DEFAULT']['Token'] = input('Authentication Token: ')
         config['DEFAULT']['sitename'] = input('Site name: ')
+        config['Optional'] = {}
         config['Optional']['rack_group'] = input('Rack Group: ')
         config['DEFAULT']['rack_name'] = input('Rack Name: ')
         config['DEFAULT']['device_role'] = input('Device Role: ')
         config['DEFAULT']['device_role_color'] = input(
             'Device Role Color Hex (e.g. aa1409): ')
-        config['Optional']['position'] = input(
-            'Mounted rack position (lowest, from 1) : ')
-        config['Optional']['face'] = input(
-            'Mounted rack face (0 for front, 1 for back) : ')
+        is_mounted = input('Is the device mounted? (Y/N)')
+        if is_mounted == 'Y':
+            config['Optional']['position'] = input(
+                'Mounted rack position (lowest, from 1) : ')
+            config['Optional']['face'] = input(
+                'Mounted rack face (0 for front, 1 for back) : ')
+        
 
         with open(configFile, 'w') as config_file:
             config.write(config_file)
@@ -263,9 +267,8 @@ class NetBoxAgent():
 
     def update_device(self, prev_device):
         logging.debug('Updating Device : ' + prev_device['name'])
-        data = {'name' : prev_device['name'], 'manufacturer_id' : self.manufacturer['id'],
-        'role_id' : self.device_role['id'], 'site_id' : self.site['id'], 
-        'rack_group_id' : self.rack_group['id'], 'rack_id' : self.rack['id']}
+        data = {'name' : prev_device['name'], 'device_role' : self.device_role['id'], 
+        'site' : self.site['id'], 'rack' : self.rack['id']}
 
         if self.rack_position != None:
             data['position'] = self.rack_position
