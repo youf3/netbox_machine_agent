@@ -30,6 +30,10 @@ def run_command(cmd, ignore_stderr = False):
 
 def get_hw_linux(hwclass, device_id):
     out, err = run_command('lshw -class ' + hwclass)
+    if err != '':
+        if err == 'WARNING: you should run this program as super-user.\n':
+            pass
+        else: raise Exception(err)
     HW_strs = out.split('  *-')
     HWs = []
     
