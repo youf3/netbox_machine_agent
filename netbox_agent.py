@@ -88,10 +88,13 @@ class NetBoxAgent():
         elif len(resp['results']) == 0 : return None
         else : return resp['results']
 
-    def query_post(self, obj_name, data):        
+    def query_post(self, obj_name, data):
+        if 'name' in data and len(data['name']) > 50:
+            data['name'] = data['name'][:50]
+
         resp = requests.post('{0}/{1}/'.format(self.base_url, obj_name), 
         json=data, headers=self.headers, allow_redirects=False)
-
+        
         if resp.status_code != 201: raise Exception(
             'Failed to create {0} : {1} status {2}: {3}'
             .format(obj_name, next(iter( data.items())), resp.status_code, 

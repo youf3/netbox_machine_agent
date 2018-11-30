@@ -30,14 +30,14 @@ def run_command(cmd, ignore_stderr = False):
 
 def get_hw_linux(hwclass, device_id):
     out, err = run_command('lshw -class ' + hwclass)
-    HW_strs = out.split('  *-' + hwclass)
+    HW_strs = out.split('  *-')
     HWs = []
     
 
     for HW_str in HW_strs[1:]:
         HW = {}
         for line in HW_str.splitlines()[1:]:
-            prop = line.strip().split(':',1)
+            prop = line.strip().split(':',1)            
             if prop[0] == 'bus info':                 
                 prop[1] = str(device_id) + '@' + prop[1].strip()                
             else : prop[1].strip()
@@ -53,8 +53,8 @@ def get_hw_linux(hwclass, device_id):
 
         if hwclass == 'cpu':
             HW['description'] = 'Central Processing Unit'
-
-        HWs.append(HW)    
+        if 'bus info' in HW:
+            HWs.append(HW)    
     return HWs
 
 
