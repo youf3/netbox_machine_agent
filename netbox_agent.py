@@ -85,8 +85,11 @@ class NetBoxAgent():
             self.base_url, obj_name, param_str),headers=self.headers).json()
 
         if 'detail' in resp and resp['detail'] == 'Not found.': return None
-        elif len(resp['results']) == 0 : return None
-        else : return resp['results']
+        elif 'result' in resp and len(resp['results']) == 0 : return None
+        elif 'results' in resp : return resp['results']
+        elif type(resp) == dict: return resp
+        else: raise Exception()
+
 
     def query_post(self, obj_name, data):
         if 'name' in data and len(data['name']) > 50:
@@ -232,7 +235,18 @@ class NetBoxAgent():
         param = {'model' : model_name}
         device_type = self.query_get('dcim/device-types', param)
         if device_type == None: self.create_device_type(model_name,height)
-        else : self.device_type = device_type[0]
+        else : self.update_device_type(device_type[0])
+            
+    def update_device_type(self, device_type):
+        if device_type['manufacturer']['id'] != self.manufacturer['id']:
+            data = {'manufacturer' : self.manufacturer['id']}
+            self.query_patch('dcim/device-types', device_type['id'], data)        
+
+            param = {}
+            self.device_type = self.query_get('dcim/device-types/{}'.format(device_type['id']), param)
+        else:
+            self.device_type = device_type
+        
     
     def create_device_type(self, model_name, height):
         logging.debug('Creating device type ' + model_name)
