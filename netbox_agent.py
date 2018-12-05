@@ -85,7 +85,7 @@ class NetBoxAgent():
             self.base_url, obj_name, param_str),headers=self.headers).json()
 
         if 'detail' in resp and resp['detail'] == 'Not found.': return None
-        elif 'result' in resp and len(resp['results']) == 0 : return None
+        elif 'results' in resp and len(resp['results']) == 0 : return None
         elif 'results' in resp : return resp['results']
         elif type(resp) == dict: return resp
         else: raise Exception()
