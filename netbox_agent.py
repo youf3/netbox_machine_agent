@@ -31,6 +31,11 @@ class NetBoxAgent():
             self.rack_face = int(optional_conf['face'])
         else: self.rack_position = None
 
+        if 'manufacturer' in optional_conf:
+            self.manufacturer_name = optional_conf['manufacturer']
+            self.model_name = optional_conf['model_name']
+        else : self.manufacturer_name = None
+
         self.get_device(config['DEFAULT']['device_role'], 
         config['DEFAULT']['device_role_color'])
         
@@ -56,12 +61,16 @@ class NetBoxAgent():
         config['DEFAULT']['device_role_color'] = input(
             'Device Role Color Hex (e.g. aa1409): ')
         is_mounted = input('Is the device mounted? (Y/N)')
-        if is_mounted == 'Y':
+        if is_mounted.lower() == 'y':
             config['Optional']['position'] = input(
                 'Mounted rack position (lowest, from 1) : ')
             config['Optional']['face'] = input(
                 'Mounted rack face (0 for front, 1 for back) : ')
-        
+        is_manuf_known = input('Do you know the manufacturer' 
+            'and model name? (Y/N)')
+        if is_manuf_known.lower() == 'y':
+            config['Optional']['manufacturer'] = input('Manufacturer: ')
+            config['Optional']['model_name'] = input('Model name: ')
 
         with open(configFile, 'w') as config_file:
             config.write(config_file)
@@ -214,15 +223,16 @@ class NetBoxAgent():
 
     def get_device_type(self):
         sysinfo = dmidecode.profile()
-
+        
         for item in sysinfo:
-            if 'system' in item[0] and ('Manufacturer' in item[1] and 
-            'Product Name' in item[1]):
-                manufacturer = item[1]['Manufacturer']                
-                model_name = item[1]['Product Name']                
-                logging.debug('System information found {0} {1}'.format(
-                    manufacturer, model_name))
-                
+            if self.manufacturer_name == None:
+                if 'system' in item[0] and ('Manufacturer' in item[1] and 
+                'Product Name' in item[1]):
+                    self.manufacturer_name = item[1]['Manufacturer']                
+                    self.model_name = item[1]['Product Name']                
+                    logging.debug('System information found {0} {1}'.format(
+                        self.manufacturer_name, self.model_name))
+                    
             if 'chassis' in item[0]:                
                 height = item[1]['Height']
                 if height == 'Unspecified': height = 1
@@ -230,11 +240,11 @@ class NetBoxAgent():
                 logging.debug('Chassis information found. Height {0}'.format(
                     height))
 
-        self.get_manufacturer(manufacturer)
+        self.get_manufacturer(self.manufacturer_name)
         
-        param = {'model' : model_name}
+        param = {'model' : self.model_name}
         device_type = self.query_get('dcim/device-types', param)
-        if device_type == None: self.create_device_type(model_name,height)
+        if device_type == None: self.create_device_type(self.model_name,height)
         else : self.update_device_type(device_type[0])
             
     def update_device_type(self, device_type):
@@ -266,10 +276,10 @@ class NetBoxAgent():
         self.get_device_type()
 
         param = {'name' : device_name}#, 'manufacturer_id' : self.manufacturer['id']}        
-        device = self.query_get('dcim/devices', param)
-        if len(device) > 1: raise Exception('More than 1 device found with name {}'
-            ''.format(device_name))
+        device = self.query_get('dcim/devices', param)        
         if device == None : self.create_device(device_name)
+        elif len(device) > 1: raise Exception('More than 1 device found with name {}'
+            ''.format(device_name))
         else : self.device = self.update_device(device[0])
 
     def create_device(self, device_name):
