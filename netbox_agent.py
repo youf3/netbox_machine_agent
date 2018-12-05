@@ -249,7 +249,7 @@ class NetBoxAgent():
         self.get_device_role(role, role_color)
         self.get_device_type()
 
-        param = {'name' : device_name, 'manufacturer_id' : self.manufacturer['id']}
+        param = {'name' : device_name}#, 'manufacturer_id' : self.manufacturer['id']}
 
         device = self.query_get('dcim/devices', param)
         if device == None : self.create_device(device_name)
