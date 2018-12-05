@@ -200,7 +200,10 @@ class NetBoxAgent():
 
     def create_manufacturer(self, manufacturer):
         logging.debug('Creating manufacturer ' + manufacturer)
-        data = {'name' : manufacturer, 'slug' : manufacturer}
+        manufacturer_slug = re.sub(r'([^-a-zA-Z0-9_])+','_',
+                manufacturer)
+        if manufacturer_slug.endswith('_') : manufacturer_slug = manufacturer_slug[:-1]
+        data = {'name' : manufacturer, 'slug' : manufacturer_slug}
         
         self.manufacturer = self.query_post('dcim/manufacturers', data)
         logging.debug('Manufacturer created {0}({1})'.format(
@@ -211,13 +214,9 @@ class NetBoxAgent():
 
         for item in sysinfo:
             if 'system' in item[0] and ('Manufacturer' in item[1] and 
-            'Product Name' in item[1]):                
-                manufacturer = re.sub(r'([^-a-zA-Z0-9_])+','_',
-                item[1]['Manufacturer'])
-                model_name = re.sub(r'[^-a-zA-Z0-9_]','_',
-                item[1]['Product Name'])
-                if manufacturer.endswith('_') : manufacturer = manufacturer[:-1]                
-                if model_name.endswith('_') : model_name = model_name[:-1]
+            'Product Name' in item[1]):
+                manufacturer = item[1]['Manufacturer']                
+                model_name = item[1]['Product Name']                
                 logging.debug('System information found {0} {1}'.format(
                     manufacturer, model_name))
                 
@@ -237,8 +236,11 @@ class NetBoxAgent():
     
     def create_device_type(self, model_name, height):
         logging.debug('Creating device type ' + model_name)
+        model_name_slug = re.sub(r'[^-a-zA-Z0-9_]','_',
+                model_name)                
+        if model_name_slug.endswith('_') : model_name_slug = model_name_slug[:-1]
         data = {'manufacturer' : self.manufacturer['id'], 'model' : model_name, 
-        'slug' : model_name, 'u_height': height}
+        'slug' : model_name_slug, 'u_height': height}
 
         self.device_type = self.query_post('dcim/device-types', data)
         logging.debug('Device  created {0}({1})'.format(
@@ -249,9 +251,10 @@ class NetBoxAgent():
         self.get_device_role(role, role_color)
         self.get_device_type()
 
-        param = {'name' : device_name}#, 'manufacturer_id' : self.manufacturer['id']}
-
+        param = {'name' : device_name}#, 'manufacturer_id' : self.manufacturer['id']}        
         device = self.query_get('dcim/devices', param)
+        if len(device) > 1: raise Exception('More than 1 device found with name {}'
+            ''.format(device_name))
         if device == None : self.create_device(device_name)
         else : self.device = self.update_device(device[0])
 
@@ -271,12 +274,23 @@ class NetBoxAgent():
     def update_device(self, prev_device):
         logging.debug('Updating Device : ' + prev_device['name'])
         data = {'name' : prev_device['name'], 'device_role' : self.device_role['id'], 
-        'site' : self.site['id'], 'rack' : self.rack['id']}
+        'site' : self.site['id'], 'rack' : self.rack['id'], 
+        'device_type' : self.device_type['id']}
 
         if self.rack_position != None:
             data['position'] = self.rack_position
-            data['face'] = self.rack_face
-        return self.query_patch('dcim/devices', prev_device['id'],data)
+            data['face'] = self.rack_face        
+        curr_device = self.query_patch('dcim/devices', prev_device['id'],data)
+        
+        if prev_device['device_type']['id'] != curr_device['device_type']['id']:             
+            self.check_empty_device_type(prev_device['device_type']['id'])
+        return curr_device
+
+    def check_empty_device_type(self, device_type_id):
+        param = {'device_type_id' : device_type_id}
+        device = self.query_get('dcim/devices', param)
+        if device == None:
+            self.query_delete('dcim/device-types', device_type_id)
 
     def get_interfaces(self):
         param = {'device_id' : self.device['id']}
