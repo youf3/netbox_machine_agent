@@ -349,23 +349,24 @@ class NetBoxAgent():
         logging.debug("Updating network interfaces")
         prev_ifaces = self.get_interfaces()        
         curr_ifaces = netifaces.interfaces()
-        gateways =  netifaces.gateways()
+        self.gateways =  netifaces.gateways()['default']
+        self.prev_ifnames = []
 
         # Delete interfaces don't exist
         if prev_ifaces != None:
-            prev_ifnames = [d['name'] for d in prev_ifaces]
+            self.prev_ifnames = [d['name'] for d in prev_ifaces]
             for prev_if in prev_ifaces:
                 if prev_if['name'] not in curr_ifaces:                    
                     self.delete_interface(prev_if)
 
         for iface in curr_ifaces:            
-            if prev_ifaces is None or iface not in prev_ifnames:
-                self.create_interface(iface, gateways['default'])
-            elif iface in prev_ifnames:
+            if prev_ifaces is None or iface not in self.prev_ifnames:
+                self.create_interface(iface)
+            elif iface in self.prev_ifnames:
                 prev_iface = [d for d in prev_ifaces if d['name'] == iface][0]
                 self.update_addresses(iface, prev_iface)
 
-    def create_interface(self, ifname, gws):
+    def create_interface(self, ifname):
         logging.debug('Creating interface ' + ifname)
         addrs = netifaces.ifaddresses(ifname)
         
@@ -377,7 +378,7 @@ class NetBoxAgent():
         if platform.system() == 'Linux':
             phy_int = get_phy_int(ifname)            
             if phy_int != ifname:
-                logging.debug('{} is vlan interface'.format(ifname))
+                logging.debug('{} is not a physical interface'.format(ifname))
                 self.add_vlan_interface(ifname, phy_int)
             else:
                 import ethtool
@@ -390,11 +391,52 @@ class NetBoxAgent():
         for k,v in addrs.items():            
             for adr in v:                
                 ipaddr = self.create_ip(adr, k, interface)
-                if (k in gws and gws[k][1] == ifname):
+                if (k in self.gateways and self.gateways[k][1] == ifname):
                     self.update_pri_ip(ipaddr,k)
+
+        return interface
 
     def add_vlan_interface(self, vlan_if, phy_int):
         logging.debug('Adding vlan {} to {}'.format(vlan_if, phy_int))
+        ip = pyroute2.IPRoute()
+        link = ip.get_links(ip.link_lookup(ifname=vlan_if)[0])[0]
+        vid = link.get_attr('IFLA_LINKINFO').get_attr('IFLA_INFO_DATA'
+        '').get_attr('IFLA_VLAN_ID')
+
+        vlan = self.get_vlan(vid)
+        if vlan == None:
+            vlan = self.create_vlan(vid)
+        elif len(vlan) > 1 : 
+            raise Exception("There are more than 1 vlan {}".format(vid))
+        else:
+            vlan = vlan[0]
+        
+        if phy_int not in self.prev_ifnames:
+            interface = self.create_interface(phy_int)
+            self.prev_ifnames.append(phy_int)
+        else:
+            param = {'name' : phy_int, 'device_id' : self.device['id']}
+            interface = self.query_get('dcim/interfaces', param)[0]
+
+        if interface['mode'] != 200:
+            data = {'id' : interface['id'], 'device' : self.device['id'], 
+            'name' : phy_int, 'mode' : 200, 'tagged_vlans' : [vlan['id']]}
+        else:
+            data = {'id' : interface['id'], 'device' : self.device['id'], 
+            'name' : phy_int, 'mode' : 200, 'tagged_vlans' : interface['tagged_vlans'].append(vlan['id'])}
+
+        self.query_patch('dcim/interfaces',interface['id'], data)
+
+
+    def get_vlan(self, vid):
+        param = {'vid' : vid}
+        return self.query_get('ipam/vlans', param)
+
+    def create_vlan(self, vid):
+        data = {'vid' : vid, 'site' : self.site['id'], 
+        'name' : 'vlan{}'.format(vid)}
+        vlan = self.query_post('ipam/vlans', data)
+        return vlan
 
     def create_ip(self, addr, addr_family, iface):
         if (addr_family != netifaces.AF_INET and addr_family != netifaces.AF_INET6):
