@@ -13,6 +13,23 @@ import requests
 import dmidecode
 import netifaces
 
+if platform.system() == 'Linux':
+    import pyroute2, ethtool
+
+def get_phy_int(interface):        
+        ip = pyroute2.IPRoute()
+        if len(ip.link_lookup(ifname=interface)) == 0 :
+            return None
+        link = ip.link("get", index=ip.link_lookup(ifname=interface)[0])[0]
+        raw_link_id = list(filter(lambda x:x[0]=='IFLA_LINK', link['attrs']))
+        if len(raw_link_id) == 1:            
+            raw_index = raw_link_id[0][1]
+            raw_link = ip.link("get", index=raw_index)[0]
+            phy_int=list(filter(lambda x:x[0]=='IFLA_IFNAME', raw_link['attrs']))[0][1]
+            return phy_int
+        else:
+            return interface
+
 class NetBoxAgent():    
     def __init__(self, configFile):
 
@@ -176,7 +193,8 @@ class NetBoxAgent():
     def create_rack(self, rack_name):
         logging.debug('Creating rack ' + rack_name)
         data = {
-            'name' : rack_name, 'slug' : rack_name, 'site' : self.site['id']
+            'name' : rack_name, 'slug' : rack_name, 
+            'site' : self.site['id']
         }
 
         if hasattr(self, 'rack_group'):
@@ -200,8 +218,8 @@ class NetBoxAgent():
         'color' : device_role_color}
 
         self.device_role = self.query_post('dcim/device-roles', data)
-        logging.debug('Device role created {0}({1})'.format(self.device_role['name'], 
-        self.device_role['id']))
+        logging.debug('Device role created {0}({1})'.format(
+            self.device_role['name'], self.device_role['id']))
 
     def get_manufacturer(self, manufacturer):
         param = {'name' : manufacturer}
@@ -214,7 +232,8 @@ class NetBoxAgent():
         logging.debug('Creating manufacturer ' + manufacturer)
         manufacturer_slug = re.sub(r'([^-a-zA-Z0-9_])+','_',
                 manufacturer)
-        if manufacturer_slug.endswith('_') : manufacturer_slug = manufacturer_slug[:-1]
+        if manufacturer_slug.endswith('_') : 
+            manufacturer_slug = manufacturer_slug[:-1]
         data = {'name' : manufacturer, 'slug' : manufacturer_slug}
         
         self.manufacturer = self.query_post('dcim/manufacturers', data)
@@ -230,15 +249,15 @@ class NetBoxAgent():
                 'Product Name' in item[1]):
                     self.manufacturer_name = item[1]['Manufacturer']                
                     self.model_name = item[1]['Product Name']                
-                    logging.debug('System information found {0} {1}'.format(
-                        self.manufacturer_name, self.model_name))
+                    logging.debug('System information found {0} {1}'
+                    ''.format(self.manufacturer_name, self.model_name))
                     
             if 'chassis' in item[0]:                
                 height = item[1]['Height']
                 if height == 'Unspecified': height = 1
                 else : height = int(height.split(' ')[0])
-                logging.debug('Chassis information found. Height {0}'.format(
-                    height))
+                logging.debug('Chassis information found. Height {0}'
+                ''.format(height))
 
         self.get_manufacturer(self.manufacturer_name)
         
@@ -253,7 +272,8 @@ class NetBoxAgent():
             self.query_patch('dcim/device-types', device_type['id'], data)        
 
             param = {}
-            self.device_type = self.query_get('dcim/device-types/{}'.format(device_type['id']), param)
+            self.device_type = self.query_get('dcim/device-types/{}'.format(
+                device_type['id']), param)
         else:
             self.device_type = device_type
         
@@ -262,9 +282,10 @@ class NetBoxAgent():
         logging.debug('Creating device type ' + model_name)
         model_name_slug = re.sub(r'[^-a-zA-Z0-9_]','_',
                 model_name)                
-        if model_name_slug.endswith('_') : model_name_slug = model_name_slug[:-1]
-        data = {'manufacturer' : self.manufacturer['id'], 'model' : model_name, 
-        'slug' : model_name_slug, 'u_height': height}
+        if model_name_slug.endswith('_') : 
+            model_name_slug = model_name_slug[:-1]
+        data = {'manufacturer' : self.manufacturer['id'], 
+        'model' : model_name, 'slug' : model_name_slug, 'u_height': height}
 
         self.device_type = self.query_post('dcim/device-types', data)
         logging.debug('Device  created {0}({1})'.format(
@@ -275,11 +296,11 @@ class NetBoxAgent():
         self.get_device_role(role, role_color)
         self.get_device_type()
 
-        param = {'name' : device_name}#, 'manufacturer_id' : self.manufacturer['id']}        
+        param = {'name' : device_name}        
         device = self.query_get('dcim/devices', param)        
         if device == None : self.create_device(device_name)
-        elif len(device) > 1: raise Exception('More than 1 device found with name {}'
-            ''.format(device_name))
+        elif len(device) > 1: raise Exception('More than 1 device found with '
+            'name {}'.format(device_name))
         else : self.device = self.update_device(device[0])
 
     def create_device(self, device_name):
@@ -297,9 +318,9 @@ class NetBoxAgent():
 
     def update_device(self, prev_device):
         logging.debug('Updating Device : ' + prev_device['name'])
-        data = {'name' : prev_device['name'], 'device_role' : self.device_role['id'], 
-        'site' : self.site['id'], 'rack' : self.rack['id'], 
-        'device_type' : self.device_type['id']}
+        data = {'name' : prev_device['name'], 'device_role' : 
+        self.device_role['id'], 'site' : self.site['id'], 
+        'rack' : self.rack['id'], 'device_type' : self.device_type['id']}
 
         if self.rack_position != None:
             data['position'] = self.rack_position
@@ -330,7 +351,7 @@ class NetBoxAgent():
         curr_ifaces = netifaces.interfaces()
         gateways =  netifaces.gateways()
 
-        # Delete interfaces not exist
+        # Delete interfaces don't exist
         if prev_ifaces != None:
             prev_ifnames = [d['name'] for d in prev_ifaces]
             for prev_if in prev_ifaces:
@@ -352,13 +373,16 @@ class NetBoxAgent():
         if netifaces.AF_LINK in addrs:
             data['mac_address'] = addrs[netifaces.AF_LINK][0]['addr']
 
-        # TODO: get switch info from lldpd
-        if platform.system() == 'Windows':
-            pass
-        elif platform.system() == 'Linux':
-            import ethtool
-            ff = ethtool.get_formfactor_id(ifname)
-            data['form_factor'] = ff
+        # TODO: get switch info from lldpd        
+        if platform.system() == 'Linux':
+            phy_int = get_phy_int(ifname)            
+            if phy_int != ifname:
+                logging.debug('{} is vlan interface'.format(ifname))
+                self.add_vlan_interface(ifname, phy_int)
+            else:
+                import ethtool
+                ff = ethtool.get_formfactor_id(ifname)
+                data['form_factor'] = ff            
         else:
             pass
 
@@ -368,6 +392,9 @@ class NetBoxAgent():
                 ipaddr = self.create_ip(adr, k, interface)
                 if (k in gws and gws[k][1] == ifname):
                     self.update_pri_ip(ipaddr,k)
+
+    def add_vlan_interface(self, vlan_if, phy_int):
+        logging.debug('Adding vlan {} to {}'.format(vlan_if, phy_int))
 
     def create_ip(self, addr, addr_family, iface):
         if (addr_family != netifaces.AF_INET and addr_family != netifaces.AF_INET6):
@@ -499,7 +526,7 @@ class NetBoxAgent():
     def delete_hw(self, hw):
         logging.debug('Deleting HW inventory' + hw['name'])
         self.query_delete('dcim/inventory-items', hw['id'])
-        
+            
 
 if __name__=='__main__':    
     logging.basicConfig(level=logging.DEBUG)
