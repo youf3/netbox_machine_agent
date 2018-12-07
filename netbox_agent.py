@@ -379,15 +379,19 @@ class NetBoxAgent():
             phy_int = get_phy_int(ifname)            
             if phy_int != ifname:
                 logging.debug('{} is not a physical interface'.format(ifname))
-                self.add_vlan_interface(ifname, phy_int)
+                interface = self.add_vlan_interface(ifname, phy_int)
+                
             else:
                 import ethtool
                 ff = ethtool.get_formfactor_id(ifname)
                 data['form_factor'] = ff            
+                interface = self.query_post('dcim/interfaces', data)
+                self.prev_ifnames.append(ifname)
         else:
-            pass
-
-        interface = self.query_post('dcim/interfaces', data)
+            interface = self.query_post('dcim/interfaces', data)
+            self.prev_ifnames.append(ifname)
+                
+        
         for k,v in addrs.items():            
             for adr in v:                
                 ipaddr = self.create_ip(adr, k, interface)
@@ -418,15 +422,21 @@ class NetBoxAgent():
             param = {'name' : phy_int, 'device_id' : self.device['id']}
             interface = self.query_get('dcim/interfaces', param)[0]
 
-        if interface['mode'] != 200:
+        if interface['mode'] == None or interface['mode']['value'] != 200:
             data = {'id' : interface['id'], 'device' : self.device['id'], 
             'name' : phy_int, 'mode' : 200, 'tagged_vlans' : [vlan['id']]}
+            self.query_patch('dcim/interfaces',interface['id'], data)
+
         else:
-            data = {'id' : interface['id'], 'device' : self.device['id'], 
-            'name' : phy_int, 'mode' : 200, 'tagged_vlans' : interface['tagged_vlans'].append(vlan['id'])}
+            vlans = interface['tagged_vlans']
+            vids = [i['id'] for i in vlans]
+            if vlan['id'] not in vids:
+                vids.append(vlan['id'])
+                data = {'id' : interface['id'], 'device' : self.device['id'], 
+                'name' : phy_int, 'mode' : 200, 'tagged_vlans' : vids}
+                self.query_patch('dcim/interfaces',interface['id'], data)
 
-        self.query_patch('dcim/interfaces',interface['id'], data)
-
+        return interface
 
     def get_vlan(self, vid):
         param = {'vid' : vid}
