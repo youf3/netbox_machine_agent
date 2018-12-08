@@ -12,6 +12,7 @@ import platform
 import requests
 import dmidecode
 import netifaces
+import netaddr
 
 if platform.system() == 'Linux':
     import pyroute2, ethtool
@@ -29,6 +30,19 @@ def get_phy_int(interface):
             return phy_int
         else:
             return interface
+
+def convert_v6_to_simple(addr, ifname):
+    address = addr['addr'].replace('%{}'.format(ifname), '')
+    netmask = addr['netmask'].split('/')[-1]
+
+    return address, netmask
+
+def get_vid(vlan_if):
+    ip = pyroute2.IPRoute()
+    link = ip.get_links(ip.link_lookup(ifname=vlan_if)[0])[0]
+    vid = link.get_attr('IFLA_LINKINFO').get_attr('IFLA_INFO_DATA').get_attr(
+        'IFLA_VLAN_ID')
+    return vid
 
 class NetBoxAgent():    
     def __init__(self, configFile):
@@ -379,7 +393,7 @@ class NetBoxAgent():
             phy_int = get_phy_int(ifname)            
             if phy_int != ifname:
                 logging.debug('{} is not a physical interface'.format(ifname))
-                interface = self.add_vlan_interface(ifname, phy_int)
+                interface = self.add_vlan_interface(ifname, phy_int, addrs)
                 
             else:
                 import ethtool
@@ -392,20 +406,32 @@ class NetBoxAgent():
             self.prev_ifnames.append(ifname)
                 
         
-        for k,v in addrs.items():            
-            for adr in v:                
-                ipaddr = self.create_ip(adr, k, interface)
+        for k,v in addrs.items():
+            if not (k == netifaces.AF_INET or k == netifaces.AF_INET6):
+                continue
+            for adr in v:
+                if phy_int != ifname:
+                    if k == netifaces.AF_INET6:
+                        ipv6addrs = [i['address'] for i in self.get_ip_addresses(interface) if i['family'] == 6]
+                        address, netmask = convert_v6_to_simple(adr, ifname)
+                        adr_str = '{}/{}'.format(address,netmask)
+                        if adr_str in ipv6addrs:
+                            continue
+                    ipaddr = self.create_ip(adr, k, interface, ifname)
+                else:
+                    ipaddr = self.create_ip(adr, k, interface)
                 if (k in self.gateways and self.gateways[k][1] == ifname):
                     self.update_pri_ip(ipaddr,k)
 
         return interface
 
-    def add_vlan_interface(self, vlan_if, phy_int):
+    def get_ip_addresses(self, interface):
+        param = {'device_id' : self.device['id'], 'interface_id' : interface['id']}
+        return self.query_get('ipam/ip-addresses', param)
+
+    def add_vlan_interface(self, vlan_if, phy_int, addrs):
         logging.debug('Adding vlan {} to {}'.format(vlan_if, phy_int))
-        ip = pyroute2.IPRoute()
-        link = ip.get_links(ip.link_lookup(ifname=vlan_if)[0])[0]
-        vid = link.get_attr('IFLA_LINKINFO').get_attr('IFLA_INFO_DATA'
-        '').get_attr('IFLA_VLAN_ID')
+        vid = get_vid(vlan_if)
 
         vlan = self.get_vlan(vid)
         if vlan == None:
@@ -439,7 +465,7 @@ class NetBoxAgent():
         return interface
 
     def get_vlan(self, vid):
-        param = {'vid' : vid}
+        param = {'vid' : vid, 'site_id' : self.site['id']}
         return self.query_get('ipam/vlans', param)
 
     def create_vlan(self, vid):
@@ -448,7 +474,7 @@ class NetBoxAgent():
         vlan = self.query_post('ipam/vlans', data)
         return vlan
 
-    def create_ip(self, addr, addr_family, iface):
+    def create_ip(self, addr, addr_family, iface, vlan_ifname = None):
         if (addr_family != netifaces.AF_INET and addr_family != netifaces.AF_INET6):
             logging.debug('Ignoring non-IP address {0} for {1} '
             ''.format(addr['addr'], iface['name']))
@@ -458,8 +484,10 @@ class NetBoxAgent():
             addr['addr'], iface['name']))
 
         if addr_family == netifaces.AF_INET6:
-            address = addr['addr'].replace('%{}'.format(iface['name']), '')
-            netmask = addr['netmask'].split('/')[-1]
+            if vlan_ifname != None:
+                address, netmask = convert_v6_to_simple(addr, vlan_ifname)
+            else:
+                address, netmask = convert_v6_to_simple(addr, iface['name'])                
         else:
             address = addr['addr']
             netmask = addr['netmask']
