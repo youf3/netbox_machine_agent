@@ -12,6 +12,7 @@ import platform
 import requests
 import dmidecode
 import netifaces
+import netaddr
 
 if platform.system() == 'Linux':
     import pyroute2, ethtool
@@ -21,6 +22,8 @@ def get_phy_int(interface):
         if len(ip.link_lookup(ifname=interface)) == 0 :
             return None
         link = ip.link("get", index=ip.link_lookup(ifname=interface)[0])[0]
+        if 'IFLA_LINK_NETNSID' in [x.cell[0] for x in link['attrs']]:
+            return None
         raw_link_id = list(filter(lambda x:x[0]=='IFLA_LINK', link['attrs']))
         if len(raw_link_id) == 1:            
             raw_index = raw_link_id[0][1]
@@ -29,6 +32,19 @@ def get_phy_int(interface):
             return phy_int
         else:
             return interface
+
+def convert_v6_to_simple(addr, ifname):
+    address = addr['addr'].replace('%{}'.format(ifname), '')
+    netmask = addr['netmask'].split('/')[-1]
+
+    return address, netmask
+
+def get_vid(vlan_if):
+    ip = pyroute2.IPRoute()
+    link = ip.get_links(ip.link_lookup(ifname=vlan_if)[0])[0]
+    vid = link.get_attr('IFLA_LINKINFO').get_attr('IFLA_INFO_DATA').get_attr(
+        'IFLA_VLAN_ID')
+    return vid
 
 class NetBoxAgent():    
     def __init__(self, configFile):
@@ -349,23 +365,24 @@ class NetBoxAgent():
         logging.debug("Updating network interfaces")
         prev_ifaces = self.get_interfaces()        
         curr_ifaces = netifaces.interfaces()
-        gateways =  netifaces.gateways()
+        self.gateways =  netifaces.gateways()['default']
+        self.prev_ifnames = []
 
         # Delete interfaces don't exist
         if prev_ifaces != None:
-            prev_ifnames = [d['name'] for d in prev_ifaces]
+            self.prev_ifnames = [d['name'] for d in prev_ifaces]
             for prev_if in prev_ifaces:
                 if prev_if['name'] not in curr_ifaces:                    
                     self.delete_interface(prev_if)
 
         for iface in curr_ifaces:            
-            if prev_ifaces is None or iface not in prev_ifnames:
-                self.create_interface(iface, gateways['default'])
-            elif iface in prev_ifnames:
+            if prev_ifaces is None or iface not in self.prev_ifnames:
+                self.create_interface(iface)
+            elif iface in self.prev_ifnames:
                 prev_iface = [d for d in prev_ifaces if d['name'] == iface][0]
                 self.update_addresses(iface, prev_iface)
 
-    def create_interface(self, ifname, gws):
+    def create_interface(self, ifname):
         logging.debug('Creating interface ' + ifname)
         addrs = netifaces.ifaddresses(ifname)
         
@@ -375,28 +392,130 @@ class NetBoxAgent():
 
         # TODO: get switch info from lldpd        
         if platform.system() == 'Linux':
-            phy_int = get_phy_int(ifname)            
-            if phy_int != ifname:
-                logging.debug('{} is vlan interface'.format(ifname))
-                self.add_vlan_interface(ifname, phy_int)
+            phy_int = get_phy_int(ifname)    
+            if phy_int == None:
+                logging.debug('No physical interface for {}. Ignoring'.format(
+                    ifname))
+                return None
+            elif phy_int != ifname:
+                logging.debug('{} is not a physical interface'.format(ifname))
+                interface = self.add_vlan_interface(ifname, phy_int, addrs)
+                
             else:
                 import ethtool
                 ff = ethtool.get_formfactor_id(ifname)
                 data['form_factor'] = ff            
+                interface = self.query_post('dcim/interfaces', data)
+                self.prev_ifnames.append(ifname)
         else:
-            pass
-
-        interface = self.query_post('dcim/interfaces', data)
-        for k,v in addrs.items():            
-            for adr in v:                
-                ipaddr = self.create_ip(adr, k, interface)
-                if (k in gws and gws[k][1] == ifname):
+            interface = self.query_post('dcim/interfaces', data)
+            self.prev_ifnames.append(ifname)
+                
+        
+        for k,v in addrs.items():
+            if not (k == netifaces.AF_INET or k == netifaces.AF_INET6):
+                continue
+            for adr in v:
+                if phy_int != ifname:
+                    if k == netifaces.AF_INET6:
+                        ipv6addrs = [i['address'] for i in self.get_ip_addresses(interface) if i['family'] == 6]
+                        address, netmask = convert_v6_to_simple(adr, ifname)
+                        adr_str = '{}/{}'.format(address,netmask)
+                        if adr_str in ipv6addrs:
+                            continue
+                    ipaddr = self.create_ip(adr, k, interface, ifname)
+                else:
+                    ipaddr = self.create_ip(adr, k, interface)
+                if (k in self.gateways and self.gateways[k][1] == ifname):
                     self.update_pri_ip(ipaddr,k)
 
-    def add_vlan_interface(self, vlan_if, phy_int):
-        logging.debug('Adding vlan {} to {}'.format(vlan_if, phy_int))
+        return interface
 
-    def create_ip(self, addr, addr_family, iface):
+    def get_ip_addresses(self, interface):
+        param = {'device_id' : self.device['id'], 'interface_id' : interface['id']}
+        return self.query_get('ipam/ip-addresses', param)
+
+    def add_vlan_interface(self, vlan_if, phy_int, addrs):
+        logging.debug('Adding vlan {} to {}'.format(vlan_if, phy_int))
+        vid = get_vid(vlan_if)
+
+        vlan = self.get_vlan(vid)
+        
+        
+        # create parent interface if not exist
+        if phy_int not in self.prev_ifnames:
+            interface = self.create_interface(phy_int)
+            self.prev_ifnames.append(phy_int)
+        else:
+            param = {'name' : phy_int, 'device_id' : self.device['id']}
+            interface = self.query_get('dcim/interfaces', param)[0]
+
+        if interface['mode'] == None or interface['mode']['value'] != 200:
+            data = {'id' : interface['id'], 'device' : self.device['id'], 
+            'name' : phy_int, 'mode' : 200, 'tagged_vlans' : [vlan['id']]}
+            self.query_patch('dcim/interfaces',interface['id'], data)
+        else:
+            vlans = interface['tagged_vlans']
+            vids = [i['id'] for i in vlans]
+            if vlan['id'] not in vids:
+                vids.append(vlan['id'])
+                data = {'id' : interface['id'], 'device' : self.device['id'], 
+                'name' : phy_int, 'mode' : 200, 'tagged_vlans' : vids}
+                self.query_patch('dcim/interfaces',interface['id'], data)
+
+        for k,v in addrs.items():
+            if not (k == netifaces.AF_INET or k == netifaces.AF_INET6):
+                continue
+            for adr in v:
+                if k == netifaces.AF_INET6:
+                    address, netmask = convert_v6_to_simple(adr, vlan_if)
+                    #skip if link addr
+                    if address == 'fe80::' : continue
+                    ip = netaddr.IPNetwork(address + '/' + netmask)
+                elif k == netifaces.AF_INET:
+                    ip = netaddr.IPNetwork(adr['addr'] + '/' + adr['netmask'])
+                
+                prefix = self.get_prefix(str(ip.cidr), vlan)                
+        return interface
+
+    def get_prefix(self, cidr, vlan):
+        param = {'q' : cidr, 'site_id' : self.site['id']} 
+        prefix = self.query_get('ipam/prefixes', param)        
+        if prefix == None:            
+            prefix = self.create_prefix(cidr, vlan)
+        elif len(prefix) > 1:
+            raise Exception('More than 1 prefix found {}'.format(cidr))
+        elif prefix[0]['vlan'] != vlan['id']:
+            data = {'vlan' : vlan['id']}
+            self.query_patch('ipam/prefixes', prefix[0]['id'], data)
+        return prefix
+
+    def create_prefix(self, cidr, vlan):
+        logging.debug('Creating Prefix {} vlan {}'.format(cidr, vlan['vid']))
+        data = {'prefix' : cidr, 'status' : 1 , 'site' : self.site['id'], 
+        'vlan' : vlan['id']}
+        return self.query_post('ipam/prefixes', data)
+
+    def get_vlan(self, vid):
+        param = {'vid' : vid, 'site_id' : self.site['id']}
+        vlan =  self.query_get('ipam/vlans', param)
+        if vlan == None:
+            vlan = self.create_vlan(vid)
+        elif len(vlan) > 1 : 
+            raise Exception("There are more than 1 vlan {}".format(vid))
+        else:
+            vlan = vlan[0]
+        return vlan
+
+    def create_vlan(self, vid):
+        logging.debug('Creating vlan {}'.format(vid))
+        data = {'vid' : vid, 'site' : self.site['id'], 
+        'name' : 'vlan{}'.format(vid)}
+        vlan = self.query_post('ipam/vlans', data)
+        return vlan
+
+    def create_ip(self, addr, addr_family, iface, vlan_ifname = None):
+        logging.debug('Creating ip {}'.format(addr['addr']))
         if (addr_family != netifaces.AF_INET and addr_family != netifaces.AF_INET6):
             logging.debug('Ignoring non-IP address {0} for {1} '
             ''.format(addr['addr'], iface['name']))
@@ -406,8 +525,10 @@ class NetBoxAgent():
             addr['addr'], iface['name']))
 
         if addr_family == netifaces.AF_INET6:
-            address = addr['addr'].replace('%{}'.format(iface['name']), '')
-            netmask = addr['netmask'].split('/')[-1]
+            if vlan_ifname != None:
+                address, netmask = convert_v6_to_simple(addr, vlan_ifname)
+            else:
+                address, netmask = convert_v6_to_simple(addr, iface['name'])                
         else:
             address = addr['addr']
             netmask = addr['netmask']
