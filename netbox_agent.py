@@ -434,13 +434,9 @@ class NetBoxAgent():
         vid = get_vid(vlan_if)
 
         vlan = self.get_vlan(vid)
-        if vlan == None:
-            vlan = self.create_vlan(vid)
-        elif len(vlan) > 1 : 
-            raise Exception("There are more than 1 vlan {}".format(vid))
-        else:
-            vlan = vlan[0]
         
+        
+        # create parent interface if not exist
         if phy_int not in self.prev_ifnames:
             interface = self.create_interface(phy_int)
             self.prev_ifnames.append(phy_int)
@@ -452,7 +448,6 @@ class NetBoxAgent():
             data = {'id' : interface['id'], 'device' : self.device['id'], 
             'name' : phy_int, 'mode' : 200, 'tagged_vlans' : [vlan['id']]}
             self.query_patch('dcim/interfaces',interface['id'], data)
-
         else:
             vlans = interface['tagged_vlans']
             vids = [i['id'] for i in vlans]
@@ -462,19 +457,59 @@ class NetBoxAgent():
                 'name' : phy_int, 'mode' : 200, 'tagged_vlans' : vids}
                 self.query_patch('dcim/interfaces',interface['id'], data)
 
+        for k,v in addrs.items():
+            if not (k == netifaces.AF_INET or k == netifaces.AF_INET6):
+                continue
+            for adr in v:
+                if k == netifaces.AF_INET6:
+                    address, netmask = convert_v6_to_simple(adr, vlan_if)
+                    #skip if link addr
+                    if address == 'fe80::' : continue
+                    ip = netaddr.IPNetwork(address + '/' + netmask)
+                elif k == netifaces.AF_INET:
+                    ip = netaddr.IPNetwork(adr['addr'] + '/' + adr['netmask'])
+                
+                prefix = self.get_prefix(str(ip.cidr), vlan)                
         return interface
+
+    def get_prefix(self, cidr, vlan):
+        param = {'q' : cidr, 'site_id' : self.site['id']} 
+        prefix = self.query_get('ipam/prefixes', param)        
+        if prefix == None:            
+            prefix = self.create_prefix(cidr, vlan)
+        elif len(prefix) > 1:
+            raise Exception('More than 1 prefix found {}'.format(cidr))
+        elif prefix[0]['vlan'] != vlan['id']:
+            data = {'vlan' : vlan['id']}
+            self.query_patch('ipam/prefixes', prefix[0]['id'], data)
+        return prefix
+
+    def create_prefix(self, cidr, vlan):
+        logging.debug('Creating Prefix {} vlan {}'.format(cidr, vlan['vid']))
+        data = {'prefix' : cidr, 'status' : 1 , 'site' : self.site['id'], 
+        'vlan' : vlan['id']}
+        return self.query_post('ipam/prefixes', data)
 
     def get_vlan(self, vid):
         param = {'vid' : vid, 'site_id' : self.site['id']}
-        return self.query_get('ipam/vlans', param)
+        vlan =  self.query_get('ipam/vlans', param)
+        if vlan == None:
+            vlan = self.create_vlan(vid)
+        elif len(vlan) > 1 : 
+            raise Exception("There are more than 1 vlan {}".format(vid))
+        else:
+            vlan = vlan[0]
+        return vlan
 
     def create_vlan(self, vid):
+        logging.debug('Creating vlan {}'.format(vid))
         data = {'vid' : vid, 'site' : self.site['id'], 
         'name' : 'vlan{}'.format(vid)}
         vlan = self.query_post('ipam/vlans', data)
         return vlan
 
     def create_ip(self, addr, addr_family, iface, vlan_ifname = None):
+        logging.debug('Creating ip {}'.format(addr['addr']))
         if (addr_family != netifaces.AF_INET and addr_family != netifaces.AF_INET6):
             logging.debug('Ignoring non-IP address {0} for {1} '
             ''.format(addr['addr'], iface['name']))
