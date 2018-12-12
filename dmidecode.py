@@ -1,3 +1,7 @@
+# Sources:
+# https://pypi.org/project/dmidecode/
+# http://pleasedonttouchthescreen.blogspot.com/2012/05/dmidecode-211-for-windows.html
+
 from __future__ import print_function
 import os, sys, platform, urllib
 

@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-# requirement: dmidecode
+# requirement: requests, netifaces, netaddr, pyroute2
 
 import configparser
 import logging
