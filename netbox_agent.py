@@ -22,6 +22,8 @@ def get_phy_int(interface):
         if len(ip.link_lookup(ifname=interface)) == 0 :
             return None
         link = ip.link("get", index=ip.link_lookup(ifname=interface)[0])[0]
+        if 'IFLA_LINK_NETNSID' in [x.cell[0] for x in link['attrs']]:
+            return None
         raw_link_id = list(filter(lambda x:x[0]=='IFLA_LINK', link['attrs']))
         if len(raw_link_id) == 1:            
             raw_index = raw_link_id[0][1]
@@ -390,8 +392,12 @@ class NetBoxAgent():
 
         # TODO: get switch info from lldpd        
         if platform.system() == 'Linux':
-            phy_int = get_phy_int(ifname)            
-            if phy_int != ifname:
+            phy_int = get_phy_int(ifname)    
+            if phy_int == None:
+                logging.debug('No physical interface for {}. Ignoring'.format(
+                    ifname))
+                return None
+            elif phy_int != ifname:
                 logging.debug('{} is not a physical interface'.format(ifname))
                 interface = self.add_vlan_interface(ifname, phy_int, addrs)
                 
