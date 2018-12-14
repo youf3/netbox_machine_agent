@@ -475,7 +475,7 @@ class NetBoxAgent():
                 elif k == netifaces.AF_INET:
                     ip = netaddr.IPNetwork(adr['addr'] + '/' + adr['netmask'])
                 
-                prefix = self.get_prefix(str(ip.cidr), vlan)                
+                self.get_prefix(str(ip.cidr), vlan)                
         return interface
 
     def get_prefix(self, cidr, vlan):
@@ -613,7 +613,8 @@ class NetBoxAgent():
             curr_hws_tags = [d['bus info'] for d in hws if 'bus info' in d]
 
             for prev_hw in prev_hws:
-                if prev_hw['asset_tag'] not in curr_hws_tags or self.is_hw_changed(prev_hw, hws):
+                if (prev_hw['asset_tag'] not in curr_hws_tags or 
+                self.is_hw_changed(prev_hw, hws)):
                     self.delete_hw(prev_hw)
 
         for hw in hws:            
@@ -624,10 +625,11 @@ class NetBoxAgent():
         matching_devices = [d for d in curr_hws if d['bus info'] == prev_hw['asset_tag']]
         if len(matching_devices) == 0:
             return True
-        elif matching_devices[0]['description'].strip() != prev_hw['description']:
-            return True
-        else: return False
-
+        elif 'product' in matching_devices[0]:
+            return matching_devices[0]['product'][:50] != prev_hw['name']
+        else:
+            return matching_devices[0]['description'][:50] != prev_hw['name']
+ 
     def get_hw(self):
         params = {'device_id' : self.device['id']}
         return self.query_get('dcim/inventory-items', params)

@@ -46,7 +46,7 @@ def get_hw_linux(hwclass, device_id):
                 prop[1] = str(device_id) + '@' + prop[1].strip()                
             else : prop[1].strip()
 
-            HW[prop[0]] = prop[1]
+            HW[prop[0]] = prop[1].strip()
 
             if 'driver=nvme' in prop[1]: 
                 pci_addr = HW['bus info'].split('@')[-1].replace(':','\:')
