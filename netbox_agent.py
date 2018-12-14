@@ -418,7 +418,10 @@ class NetBoxAgent():
             for adr in v:
                 if phy_int != ifname:
                     if k == netifaces.AF_INET6:
-                        ipv6addrs = [i['address'] for i in self.get_ip_addresses(interface) if i['family'] == 6]
+                        ipv6addrs = [i['address'] for i 
+                        in self.get_ip_addresses(interface) 
+                        if i['family'] == 6]
+                        
                         address, netmask = convert_v6_to_simple(adr, ifname)
                         adr_str = '{}/{}'.format(address,netmask)
                         if adr_str in ipv6addrs:
