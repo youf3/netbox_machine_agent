@@ -6,3 +6,6 @@ python3 netbox_agent.py
 
 ## Configuration
 Replace the server address and token in example.cfg
+
+## Note
+Currently there is no vlan support for Windows.
