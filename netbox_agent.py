@@ -656,7 +656,7 @@ class NetBoxAgent():
 
 if __name__=='__main__':    
     logging.basicConfig(level=logging.DEBUG)
-    agent = NetBoxAgent('example.cfg')
+    agent = NetBoxAgent('test.cfg')
     agent.update_interfaces()
     agent.update_pci()
     print('updated')
