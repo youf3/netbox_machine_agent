@@ -387,7 +387,7 @@ class NetBoxAgent():
         addrs = netifaces.ifaddresses(ifname)
         
         data = {'device' : self.device['id'], 'name' : ifname}
-        if netifaces.AF_LINK in addrs:
+        if netifaces.AF_LINK in addrs and addrs[netifaces.AF_LINK][0]['addr'] != '':
             data['mac_address'] = addrs[netifaces.AF_LINK][0]['addr']
 
         # TODO: get switch info from lldpd        
@@ -410,6 +410,7 @@ class NetBoxAgent():
         else:
             interface = self.query_post('dcim/interfaces', data)
             self.prev_ifnames.append(ifname)
+            phy_int = ifname
                 
         
         for k,v in addrs.items():
@@ -531,7 +532,10 @@ class NetBoxAgent():
             if vlan_ifname != None:
                 address, netmask = convert_v6_to_simple(addr, vlan_ifname)
             else:
-                address, netmask = convert_v6_to_simple(addr, iface['name'])                
+                address, netmask = convert_v6_to_simple(addr, iface['name'])
+
+            if '%' in address:
+                address = address[:address.index('%')]
         else:
             address = addr['addr']
             netmask = addr['netmask']
