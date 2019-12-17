@@ -21,15 +21,20 @@ def get_phy_int(interface):
         ip = pyroute2.IPRoute()
         if len(ip.link_lookup(ifname=interface)) == 0 :
             return None
-        link = ip.link("get", index=ip.link_lookup(ifname=interface)[0])[0]
-        if 'IFLA_LINK_NETNSID' in [x.cell[0] for x in link['attrs']]:
+        link = ip.link("get", index=ip.link_lookup(ifname=interface)[0])[0]        
+        if link.get_attr('IFLA_LINK_NETNSID') != None:
+            return None
+        elif link.get_attr('IFLA_LINKINFO') != None and get_link_type(link) != 'vlan':
             return None
         raw_link_id = list(filter(lambda x:x[0]=='IFLA_LINK', link['attrs']))
         if len(raw_link_id) == 1:            
             raw_index = raw_link_id[0][1]
-            raw_link = ip.link("get", index=raw_index)[0]
-            phy_int=list(filter(lambda x:x[0]=='IFLA_IFNAME', raw_link['attrs']))[0][1]
-            return phy_int
+            try:
+                raw_link = ip.link("get", index=raw_index)[0]
+                phy_int=list(filter(lambda x:x[0]=='IFLA_IFNAME', raw_link['attrs']))[0][1]
+                return phy_int
+            except pyroute2.netlink.exceptions.NetlinkError:
+                return interface
         else:
             return interface
 
@@ -45,6 +50,9 @@ def get_vid(vlan_if):
     vid = link.get_attr('IFLA_LINKINFO').get_attr('IFLA_INFO_DATA').get_attr(
         'IFLA_VLAN_ID')
     return vid
+
+def get_link_type(link):
+    return link.get_attr('IFLA_LINKINFO').get_attr('IFLA_INFO_KIND')    
 
 class NetBoxAgent():    
     def __init__(self, configFile):
@@ -69,8 +77,14 @@ class NetBoxAgent():
             self.model_name = optional_conf['model_name']
         else : self.manufacturer_name = None
 
-        self.get_device(config['DEFAULT']['device_role'], 
-        config['DEFAULT']['device_role_color'])
+        if 'height' in optional_conf:
+            self.height = optional_conf['height']
+        
+        if 'device_role_color' in config['DEFAULT']:
+            self.get_device(config['DEFAULT']['device_role'], 
+            config['DEFAULT']['device_role_color'])
+        else:
+            self.get_device(config['DEFAULT']['device_role'])
         
     
     def create_header(self, token):        
@@ -267,19 +281,21 @@ class NetBoxAgent():
                     self.model_name = item[1]['Product Name']                
                     logging.debug('System information found {0} {1}'
                     ''.format(self.manufacturer_name, self.model_name))
-                    
-            if 'chassis' in item[0]:                
+            
+            if 'chassis' in item[0]:
                 height = item[1]['Height']
-                if height == 'Unspecified': height = 1
-                else : height = int(height.split(' ')[0])
+                if height == 'Unspecified':
+                    if not hasattr(self, 'height'): self.height = 1                    
+                else : self.height = int(height.split(' ')[0])
                 logging.debug('Chassis information found. Height {0}'
                 ''.format(height))
+                        
 
         self.get_manufacturer(self.manufacturer_name)
         
         param = {'model' : self.model_name}
         device_type = self.query_get('dcim/device-types', param)
-        if device_type == None: self.create_device_type(self.model_name,height)
+        if device_type == None: self.create_device_type(self.model_name,self.height)
         else : self.update_device_type(device_type[0])
             
     def update_device_type(self, device_type):
@@ -307,7 +323,7 @@ class NetBoxAgent():
         logging.debug('Device  created {0}({1})'.format(
             self.device_type['model'], self.device_type['id']))
 
-    def get_device(self, role, role_color):
+    def get_device(self, role, role_color="aa1409"):
         device_name = socket.gethostname()
         self.get_device_role(role, role_color)
         self.get_device_type()
@@ -404,7 +420,9 @@ class NetBoxAgent():
             else:
                 import ethtool
                 ff = ethtool.get_formfactor_id(ifname)
-                data['form_factor'] = ff            
+                data['form_factor'] = ff
+                if ff == 0:
+                    data.pop('mac_address')
                 interface = self.query_post('dcim/interfaces', data)
                 self.prev_ifnames.append(ifname)
         else:
@@ -443,29 +461,33 @@ class NetBoxAgent():
         logging.debug('Adding vlan {} to {}'.format(vlan_if, phy_int))
         vid = get_vid(vlan_if)
 
-        vlan = self.get_vlan(vid)
-        
+        vlan = self.get_vlan(vid)        
         
         # create parent interface if not exist
         if phy_int not in self.prev_ifnames:
-            interface = self.create_interface(phy_int)
+            #phy_interface = self.create_interface(phy_int)
+            self.create_interface(phy_int)
             self.prev_ifnames.append(phy_int)
-        else:
-            param = {'name' : phy_int, 'device_id' : self.device['id']}
-            interface = self.query_get('dcim/interfaces', param)[0]
+        # else:
+        #     param = {'name' : phy_int, 'device_id' : self.device['id']}
+        #     phy_interface = self.query_get('dcim/interfaces', param)[0]
 
-        if interface['mode'] == None or interface['mode']['value'] != 200:
-            data = {'id' : interface['id'], 'device' : self.device['id'], 
-            'name' : phy_int, 'mode' : 200, 'tagged_vlans' : [vlan['id']]}
-            self.query_patch('dcim/interfaces',interface['id'], data)
-        else:
-            vlans = interface['tagged_vlans']
-            vids = [i['id'] for i in vlans]
-            if vlan['id'] not in vids:
-                vids.append(vlan['id'])
-                data = {'id' : interface['id'], 'device' : self.device['id'], 
-                'name' : phy_int, 'mode' : 200, 'tagged_vlans' : vids}
-                self.query_patch('dcim/interfaces',interface['id'], data)
+        # if phy_interface['mode'] == None or phy_interface['mode']['value'] != 200:
+        #     data = {'id' : phy_interface['id'], 'device' : self.device['id'], 
+        #     'name' : phy_int, 'mode' : 200, 'tagged_vlans' : [vlan['id']]}
+        #     self.query_patch('dcim/interfaces',phy_interface['id'], data)
+        # else:
+        #     vlans = phy_interface['tagged_vlans']
+        #     vids = [i['id'] for i in vlans]
+        #     if vlan['id'] not in vids:
+        #         vids.append(vlan['id'])
+        #         data = {'id' : phy_interface['id'], 'device' : self.device['id'], 
+        #         'name' : phy_int, 'mode' : 200, 'tagged_vlans' : vids}
+        #         self.query_patch('dcim/interfaces',phy_interface['id'], data)
+
+        data = {'device' : self.device['id'], 'name' : vlan_if, 'untagged_vlan' : vlan['id'], 'type' : 0, 'mode' : 100}
+        interface = self.query_post('dcim/interfaces', data)
+        self.prev_ifnames.append(vlan_if)
 
         for k,v in addrs.items():
             if not (k == netifaces.AF_INET or k == netifaces.AF_INET6):
@@ -660,7 +682,7 @@ class NetBoxAgent():
 
 if __name__=='__main__':    
     logging.basicConfig(level=logging.DEBUG)
-    agent = NetBoxAgent('example.cfg')
+    agent = NetBoxAgent('netbox_agent.cfg')
     agent.update_interfaces()
     agent.update_pci()
     print('updated')
