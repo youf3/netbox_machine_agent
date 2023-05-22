@@ -1,4 +1,4 @@
 netaddr==0.7.19
 netifaces==0.10.7
-requests==2.20.1
+requests==2.31.0
 pyroute2==0.5.6
